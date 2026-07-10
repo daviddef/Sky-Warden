@@ -61,7 +61,6 @@ struct HomeView: View {
 
                 tabSummary.padding(.horizontal, 16).padding(.top, 12)
 
-                onThisDayCard.padding(.horizontal, 16).padding(.top, 10)
                 hourly.padding(.top, 12)
 
                 Spacer(minLength: 20)
@@ -192,136 +191,143 @@ struct HomeView: View {
     // to say something useful instead of being truncated.
     private var tabSummary: some View {
         let today = consensus.dailyForecast.first
-        let week = consensus.dailyForecast.prefix(7)
-        let wetDays = week.filter { $0.rainProbability >= 50 }.count
         let nextTide = tideDay?.events.first { $0.time > Date() }
-
-        let rows: [SummaryRow] = [
-            .init(tab: .today, icon: "thermometer.medium",
-                  value: today.map { "\(Units.tempString($0.tempMax)) / \(Units.tempString($0.tempMin))" },
-                  title: "Today", detail: today?.condition.rawValue.lowercased()),
-            .init(tab: .week, icon: "calendar",
-                  value: week.isEmpty ? nil : (wetDays == 0 ? "All dry" : "\(wetDays) wet"),
-                  title: "Next \(week.count) days", detail: week.isEmpty ? nil : "chance of rain over 50%"),
-            .init(tab: .tides, icon: "water.waves",
-                  value: nextTide.map(\.heightDisplay),
-                  title: "Next tide",
-                  detail: nextTide.map { "\($0.type.rawValue.lowercased()) at \($0.timeDisplay)" }),
-            .init(tab: .uv, icon: "sun.max",
-                  value: consensus.uvIndex.isFinite ? "\(Int(consensus.uvIndex.rounded()))" : nil,
-                  title: "UV index", detail: ComfortMetric.uv.comfortLabel(consensus.uvIndex).lowercased()),
-            .init(tab: .sky, icon: "moon.stars",
-                  value: moonData.map { "\(Int(($0.illumination * 100).rounded()))%" },
-                  title: "Moon", detail: moonData?.phase.rawValue.lowercased()),
-            .init(tab: .sources, icon: "antenna.radiowaves.left.and.right",
-                  value: "\(consensus.sources.count)/\(consensus.sources.count + failedSources.count)",
-                  title: "Sources agreeing",
-                  detail: flagCount == 0 ? "no disagreements" : "\(flagCount) metric\(flagCount == 1 ? "" : "s") vary"),
-        ]
+        let days = Array(consensus.dailyForecast.prefix(5))
 
         return VStack(alignment: .leading, spacing: 6) {
             Text("AT A GLANCE")
                 .font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
 
             VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
-                    Button { onOpenTab?(row.tab) } label: {
-                        HStack(spacing: 11) {
-                            // Monochrome symbols, not emoji: six coloured glyphs in
-                            // a column is noise, and the tab bar already owns emoji.
-                            Image(systemName: row.icon)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(Sky.muted)
-                                .frame(width: 18)
-
-                            Text(row.title)
-                                .font(.system(size: 13)).foregroundColor(Sky.text)
-
-                            Spacer(minLength: 8)
-
-                            if let detail = row.detail {
-                                Text(detail)
-                                    .font(.system(size: 10)).foregroundColor(Sky.muted)
-                                    .lineLimit(1).layoutPriority(-1)
-                            }
-                            Text(row.value ?? "—")
-                                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                .foregroundColor(row.value == nil ? Sky.muted : Sky.white)
-                                .lineLimit(1)
-
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold)).foregroundColor(Sky.muted.opacity(0.6))
-                        }
-                        .padding(.vertical, 10).padding(.horizontal, 12)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(onOpenTab == nil)
-                    .accessibilityLabel("\(row.title), \(row.value ?? "unavailable"). Opens \(row.tab.label).")
-
-                    if i < rows.count - 1 {
-                        Rectangle().fill(Sky.surface).frame(height: 1).padding(.leading, 41)
-                    }
-                }
+                standardRow(.today, "thermometer.medium", "Today",
+                            value: today.map { "\(Units.tempString($0.tempMax)) / \(Units.tempString($0.tempMin))" },
+                            detail: today?.condition.rawValue.lowercased())
+                divider
+                weekRow(days)                       // the five-day icon strip
+                divider
+                standardRow(.tides, "water.waves", "Next tide",
+                            value: nextTide.map(\.heightDisplay),
+                            detail: nextTide.map { "\($0.type.rawValue.lowercased()) at \($0.timeDisplay)" })
+                divider
+                standardRow(.uv, "sun.max", "UV index",
+                            value: consensus.uvIndex.isFinite ? "\(Int(consensus.uvIndex.rounded()))" : nil,
+                            detail: ComfortMetric.uv.comfortLabel(consensus.uvIndex).lowercased())
+                divider
+                standardRow(.sky, "moon.stars", "Moon",
+                            value: moonData.map { "\(Int(($0.illumination * 100).rounded()))%" },
+                            detail: moonData?.phase.rawValue.lowercased())
+                divider
+                standardRow(.sources, "antenna.radiowaves.left.and.right", "Sources agreeing",
+                            value: "\(consensus.sources.count)/\(consensus.sources.count + failedSources.count)",
+                            detail: flagCount == 0 ? "no disagreements" : "\(flagCount) metric\(flagCount == 1 ? "" : "s") vary")
+                divider
+                onThisDayRow                        // compact history, no tab
             }
             .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
 
-    private struct SummaryRow: Identifiable {
-        let tab: ContentView.Tab
-        let icon: String
-        let value: String?
-        let title: String
-        let detail: String?
-        var id: String { tab.rawValue }
+    private var divider: some View {
+        Rectangle().fill(Sky.surface).frame(height: 1).padding(.leading, 41)
     }
 
-    // MARK: - On this day
-    private var onThisDayCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("📅 ON THIS DAY")
-                .font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
-            HStack(spacing: 0) {
-                column(value: Units.tempString(consensus.temperature), diff: nil,
-                       label: "today", big: true, first: true)
-                column(value: onThisDay?.oneYear,  label: "1 yr ago")
-                column(value: onThisDay?.fiveYear, label: "5 yrs ago")
-                column(value: onThisDay?.average,  label: "30yr avg")
+    // A tappable row that opens a detail tab.
+    private func standardRow(_ tab: ContentView.Tab, _ icon: String, _ title: String,
+                             value: String?, detail: String?) -> some View {
+        Button { onOpenTab?(tab) } label: {
+            HStack(spacing: 11) {
+                // Monochrome symbols, not emoji: a column of coloured glyphs is
+                // noise, and the tab bar already owns emoji.
+                Image(systemName: icon).font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Sky.muted).frame(width: 18)
+                Text(title).font(.system(size: 13)).foregroundColor(Sky.text)
+                Spacer(minLength: 8)
+                if let detail {
+                    Text(detail).font(.system(size: 10)).foregroundColor(Sky.muted)
+                        .lineLimit(1).layoutPriority(-1)
+                }
+                Text(value ?? "—").font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(value == nil ? Sky.muted : Sky.white).lineLimit(1)
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(Sky.muted.opacity(0.6))
+            }
+            .padding(.vertical, 10).padding(.horizontal, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(onOpenTab == nil)
+        .accessibilityLabel("\(title), \(value ?? "unavailable"). Opens \(tab.label).")
+    }
+
+    /// The week at a glance: the next five days as icon cells, each with its day,
+    /// weather glyph and high/low, opening the Week tab.
+    private func weekRow(_ days: [ConsensusDaily]) -> some View {
+        Button { onOpenTab?(.week) } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "calendar").font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Sky.muted).frame(width: 18)
+                if days.isEmpty {
+                    Text("Next days").font(.system(size: 13)).foregroundColor(Sky.text)
+                    Spacer(); Text("—").foregroundColor(Sky.muted)
+                } else {
+                    HStack(spacing: 0) {
+                        ForEach(Array(days.enumerated()), id: \.element.id) { i, day in
+                            VStack(spacing: 2) {
+                                Text(i == 0 ? "Today" : String(day.dayLabel.prefix(3)))
+                                    .font(.system(size: 8.5)).foregroundColor(Sky.muted).lineLimit(1)
+                                Text(day.condition.emoji).font(.system(size: 17))
+                                Text("\(Int(day.tempMax.rounded()))°")
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .foregroundColor(Sky.white)
+                                Text("\(Int(day.tempMin.rounded()))°")
+                                    .font(.system(size: 9)).foregroundColor(Sky.muted)
+                            }
+                            .frame(maxWidth: .infinity)
+                            // A calendar dot when the sources disagree on this day.
+                            .overlay(alignment: .top) {
+                                if day.hasDisagreement {
+                                    Circle().fill(Sky.amber).frame(width: 4, height: 4).offset(y: -1)
+                                }
+                            }
+                        }
+                    }
+                }
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(Sky.muted.opacity(0.6))
+            }
+            .padding(.vertical, 8).padding(.horizontal, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(onOpenTab == nil)
+        .accessibilityLabel("Next \(days.count) days. Opens the Week tab.")
+    }
+
+    /// On this day, shrunk from its own card to one compact row: how today's
+    /// temperature compares with a year ago, five years ago and the 30-year normal.
+    private var onThisDayRow: some View {
+        func cell(_ v: Double?, _ label: String) -> some View {
+            let diff = v.map { Units.displayTempDelta(consensus.temperature, $0) }
+            return VStack(spacing: 1) {
+                Text(v.map { Units.tempString($0) } ?? "—")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundColor(Sky.text)
+                if let diff, diff != 0 {
+                    Text("\(diff > 0 ? "+" : "")\(diff)°")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(diff > 0 ? Sky.red : Sky.rain)
+                } else {
+                    Text(v == nil ? " " : "0°").font(.system(size: 8)).foregroundColor(Sky.muted)
+                }
+                Text(label).font(.system(size: 7.5)).foregroundColor(Sky.muted)
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func column(value: Double?, label: String) -> some View {
-        // Delta computed from the rounded, displayed values so it agrees with them.
-        let diff = value.map { Units.displayTempDelta(consensus.temperature, $0) }
-        return column(
-            value: value.map { Units.tempString($0) } ?? "—",
-            diff: diff,
-            label: label, big: false, first: false
-        )
-    }
-
-    private func column(value: String, diff: Int?, label: String, big: Bool, first: Bool) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.system(size: big ? 20 : 15, weight: big ? .ultraLight : .light, design: .rounded))
-                .foregroundColor(big ? Sky.white : Sky.text)
-            if let diff, diff != 0 {
-                Text("\(diff > 0 ? "+" : "")\(diff)°")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(diff > 0 ? Sky.red : Sky.rain)
-            } else {
-                Text(" ").font(.system(size: 9))
-            }
-            Text(label).font(.system(size: 8)).foregroundColor(Sky.muted)
+        return HStack(spacing: 11) {
+            Image(systemName: "clock.arrow.circlepath").font(.system(size: 13, weight: .medium))
+                .foregroundColor(Sky.muted).frame(width: 18)
+            Text("On this day").font(.system(size: 13)).foregroundColor(Sky.text)
+            Spacer(minLength: 8)
+            cell(onThisDay?.oneYear, "1yr")
+            cell(onThisDay?.fiveYear, "5yr")
+            cell(onThisDay?.average, "30yr")
         }
-        .frame(maxWidth: .infinity)
-        .overlay(alignment: .leading) {
-            if !first { Rectangle().fill(Sky.surface).frame(width: 1) }
-        }
+        .padding(.vertical, 8).padding(.horizontal, 12)
+        .accessibilityLabel("On this day: a year ago, five years ago, and the 30 year average.")
     }
 
     // MARK: - Hourly strip

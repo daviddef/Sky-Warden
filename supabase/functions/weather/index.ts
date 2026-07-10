@@ -56,14 +56,22 @@ Deno.serve(async (req) => {
       return json({ error: "unauthorized" }, 401);
     }
 
+    // News is a text search with no coordinates; the weather providers are
+    // location-based. Cache-key each by what actually varies its result.
     const lat = url.searchParams.get("latitude") ?? url.searchParams.get("lat");
     const lon = url.searchParams.get("longitude") ?? url.searchParams.get("lon");
-    if (lat === null || lon === null) return json({ error: "lat/lon required" }, 400);
-
-    // Cache key = source + grid cell + the params that actually change the result.
-    const extra = ["days", "start_date", "end_date", "q"]
+    const extra = ["days", "start_date", "end_date", "q", "lang", "country"]
       .map((k) => url.searchParams.get(k)).filter(Boolean).join("|");
-    const key = `${source}:${grid(+lat)},${grid(+lon)}:${extra}`;
+
+    let key: string;
+    if (source === "gnews") {
+      const q = url.searchParams.get("q");
+      if (!q) return json({ error: "q required" }, 400);
+      key = `gnews:${extra}`;
+    } else {
+      if (lat === null || lon === null) return json({ error: "lat/lon required" }, 400);
+      key = `${source}:${grid(+lat)},${grid(+lon)}:${extra}`;
+    }
 
     const { data: hit } = await supabase
       .from("cache").select("payload,expires_at").eq("key", key).maybeSingle();
@@ -72,8 +80,11 @@ Deno.serve(async (req) => {
     }
 
     // Build the upstream request: forward the client's params, inject the key.
+    // Strip any client-supplied key param so the caller can never override or
+    // exfiltrate the server-side key by passing its own.
+    const KEY_PARAMS = new Set(["appid", "key", "apikey", "source", "x-skywarden-app"]);
     const up = new URL(prov.base);
-    for (const [k, v] of url.searchParams) if (k !== "source") up.searchParams.set(k, v);
+    for (const [k, v] of url.searchParams) if (!KEY_PARAMS.has(k)) up.searchParams.set(k, v);
     if (prov.keyParam && prov.keyEnv) up.searchParams.set(prov.keyParam, Deno.env.get(prov.keyEnv) ?? "");
 
     const res = await fetch(up.toString());
