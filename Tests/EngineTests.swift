@@ -4,7 +4,18 @@
 
 import XCTest
 import CoreLocation
+import MapKit
 @testable import SkyWarden
+
+/// MKMapRect has no region initialiser; corners it is.
+private func mapRect(_ r: MKCoordinateRegion) -> MKMapRect {
+    let nw = MKMapPoint(CLLocationCoordinate2D(latitude: r.center.latitude + r.span.latitudeDelta / 2,
+                                               longitude: r.center.longitude - r.span.longitudeDelta / 2))
+    let se = MKMapPoint(CLLocationCoordinate2D(latitude: r.center.latitude - r.span.latitudeDelta / 2,
+                                               longitude: r.center.longitude + r.span.longitudeDelta / 2))
+    return MKMapRect(x: min(nw.x, se.x), y: min(nw.y, se.y),
+                     width: abs(se.x - nw.x), height: abs(se.y - nw.y))
+}
 
 // MARK: - Fixtures
 private func reading(
@@ -307,7 +318,7 @@ final class WeatherMapServiceTests: XCTestCase {
     func testFramesRunOldestToNewestAtTheLayerStep() {
         let spec = WeatherMapLayer.cloud.spec(forLongitude: 153.35)!
         let latest = WeatherMapService.floor(Date(), toStep: spec.stepMinutes)
-        let frames = WeatherMapService.frames(endingAt: latest, spec: spec, count: 4)
+        let frames = WeatherMapService.frameDates(endingAt: latest, spec: spec, count: 4)
         XCTAssertEqual(frames.count, 4)
         XCTAssertEqual(frames.last, latest, "the newest frame is last")
         XCTAssertEqual(frames[1].timeIntervalSince(frames[0]), Double(spec.stepMinutes * 60), accuracy: 1)
@@ -315,12 +326,67 @@ final class WeatherMapServiceTests: XCTestCase {
 
     /// GIBS is WMTS: the path is {z}/{row}/{col} — row (y) BEFORE col (x).
     /// Swapping them silently renders the wrong hemisphere.
-    func testTileURLPutsRowBeforeColumn() {
+    func testGIBSTileURLPutsRowBeforeColumn() {
         let spec = WeatherMapLayer.cloud.spec(forLongitude: 153.35)!
-        let frame = Date(timeIntervalSince1970: 1_783_000_800)
+        let frame = MapFrame(date: Date(timeIntervalSince1970: 1_783_000_800), token: "2026-07-06T04:40:00Z")
         let url = WeatherMapService.tileURL(spec, frame: frame, z: 5, x: 29, y: 18)!
         XCTAssertTrue(url.absoluteString.hasSuffix("/5/18/29.png"), url.absoluteString)
         XCTAssertTrue(url.absoluteString.contains("Himawari_AHI_Band13_Clean_Infrared"))
+    }
+
+    /// RainViewer is a plain slippy map: {z}/{x}/{y}, column BEFORE row — the
+    /// opposite of GIBS. Getting these two confused transposes the map.
+    func testRainViewerTileURLPutsColumnBeforeRow() {
+        let spec = WeatherMapLayer.radar.spec(forLongitude: 153.35)!
+        let frame = MapFrame(date: Date(timeIntervalSince1970: 1_783_000_800),
+                             token: "https://tilecache.rainviewer.com/v2/radar/abc123")
+        let url = WeatherMapService.tileURL(spec, frame: frame, z: 8, x: 237, y: 148)!
+        XCTAssertEqual(url.absoluteString,
+                       "https://tilecache.rainviewer.com/v2/radar/abc123/256/8/237/148/4/1_1.png")
+    }
+
+    /// Regression: RainViewer's free tilecache answers z8+ with a tile reading
+    /// "Zoom Level Not Supported". Anything past z7 must resolve to a z7 ancestor
+    /// rather than be requested, or that text gets painted onto the map.
+    func testRadarNeverRequestsPastItsSupportedZoom() {
+        let spec = WeatherMapLayer.radar.spec(forLongitude: 153.35)!
+        XCTAssertEqual(spec.maxZ, 7)
+        for z in 8...14 {
+            let a = WeatherMapService.ancestor(z: z, x: 1 << (z - 1), y: 1 << (z - 1), maxZ: spec.maxZ)
+            XCTAssertEqual(a.z, 7, "z\(z) must fall back to the deepest served level")
+        }
+    }
+
+    /// Radar is available everywhere the catalogue reaches, unlike the
+    /// geostationary cloud layer, which is blind to half the planet.
+    func testRadarHasASpecAtEveryLongitude() {
+        for lon in stride(from: -180.0, through: 180.0, by: 30) {
+            XCTAssertNotNil(WeatherMapLayer.radar.spec(forLongitude: lon), "no radar spec at \(lon)")
+        }
+        XCTAssertNil(WeatherMapLayer.cloud.spec(forLongitude: 10), "no geostationary cover over Europe")
+    }
+
+    /// The warm-up must cache exactly the tiles MapKit is about to request. This
+    /// is the calibration point: a 1400 km camera on a ~393pt-wide phone made
+    /// MapKit ask for z6, which is what broke the layer when maximumZ was 5.
+    func testZoomLevelMatchesWhatMapKitRequests() {
+        let region = MKCoordinateRegion(center: .init(latitude: -27.87, longitude: 153.35),
+                                        latitudinalMeters: 1_400_000, longitudinalMeters: 1_400_000)
+        let rect = mapRect(region)
+        XCTAssertEqual(WeatherMapService.zoomLevel(visibleMapRect: rect, widthPoints: 393), 6)
+    }
+
+    func testTileBoundsCoverTheVisibleRectAndStayInRange() {
+        let region = MKCoordinateRegion(center: .init(latitude: -27.87, longitude: 153.35),
+                                        latitudinalMeters: 500_000, longitudinalMeters: 500_000)
+        let b = WeatherMapService.tileBounds(mapRect(region), z: 8)
+        XCTAssertLessThanOrEqual(b.x0, b.x1)
+        XCTAssertLessThanOrEqual(b.y0, b.y1)
+        XCTAssertGreaterThanOrEqual(b.x0, 0)
+        XCTAssertLessThan(b.x1, 1 << 8)
+        // The Hope Island z8 tile must fall inside the bounds we're about to warm.
+        let (x, y) = WeatherMapService.tileIndex(.init(latitude: -27.87, longitude: 153.35), z: 8)
+        XCTAssertTrue((b.x0...b.x1).contains(x) && (b.y0...b.y1).contains(y))
     }
 
     func testTileIndexForHopeIsland() {

@@ -1,7 +1,10 @@
 // Sky Warden — Map tab
-// A weather-system view on an Apple Maps basemap. Deliberately NOT called
-// "Radar": the free, licence-free imagery is ~4 km cloud and ~10 km rainfall.
-// Real radar arrives when a BOM / RainViewer licence does.
+//
+// Radar is the headline layer: a real ground-radar composite, ~1 km, ~5 minutes
+// behind. Cloud and rainfall are the wide, licence-free fallbacks that still
+// work where no radar reaches.
+//
+// See WeatherMapService for the licensing position on each provider.
 
 import SwiftUI
 import MapKit
@@ -10,34 +13,41 @@ import CoreLocation
 struct WeatherMapView: View {
     let location: CLLocation
 
-    @State private var layer: WeatherMapLayer = .cloud
-    @State private var frames: [Date] = []
+    @State private var layer: WeatherMapLayer = .radar
+    @State private var frames: [MapFrame] = []
     @State private var index: Int = 0
-    @State private var playing = true
+    @State private var playing = false
     @State private var loading = true
+    @State private var warming = false
     @State private var unavailable = false
+    @State private var warmTask: Task<Void, Never>?
 
     private let timer = Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()
 
     private var spec: TileLayerSpec? { layer.spec(forLongitude: location.coordinate.longitude) }
-    private var currentFrame: Date? { frames.indices.contains(index) ? frames[index] : nil }
+    private var currentFrame: MapFrame? { frames.indices.contains(index) ? frames[index] : nil }
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 if let spec, !frames.isEmpty {
-                    MapCanvas(center: location.coordinate, spec: spec, frames: frames, index: index)
+                    MapCanvas(center: location.coordinate, spec: spec, frames: frames, index: index,
+                              onRegionSettled: warm)
                         .ignoresSafeArea(edges: .horizontal)
+                        .id(layer)          // a new layer means a new camera, so rebuild the map
                 } else {
                     Rectangle().fill(Sky.surface)
                 }
 
-                if loading {
+                if loading || warming {
                     VStack(spacing: 10) {
                         ProgressView().tint(Sky.tide)
-                        Text("Finding the latest imagery…")
+                        Text(loading ? "Finding the latest imagery…" : "Loading frames…")
                             .font(.system(size: 11)).foregroundColor(Sky.muted)
                     }
+                    .padding(16)
+                    .background(Sky.card.opacity(0.86))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 } else if unavailable {
                     unavailableCard
                 }
@@ -52,36 +62,52 @@ struct WeatherMapView: View {
             controls
         }
         .task(id: layer.rawValue + "\(location.coordinate.latitude)") { await load() }
+        .onDisappear { warmTask?.cancel() }
         .onReceive(timer) { _ in
-            guard playing, frames.count > 1 else { return }
+            guard playing, !warming, frames.count > 1 else { return }
             index = (index + 1) % frames.count
         }
     }
 
     // MARK: - Loading
+
     private func load() async {
-        loading = true; unavailable = false; frames = []
+        warmTask?.cancel()
+        loading = true; warming = false; playing = false; unavailable = false; frames = []
         guard let spec else { loading = false; unavailable = true; return }
-        guard let latest = await WeatherMapService.latestFrame(spec, near: location.coordinate) else {
-            loading = false; unavailable = true; return
-        }
-        let all = WeatherMapService.frames(endingAt: latest, spec: spec, count: layer == .cloud ? 10 : 6)
 
-        // Pull every frame's source tiles up front. MapKit cancels a renderer's
-        // downloads as soon as it's hidden, so a frame that has to fetch during
-        // its ~1.2 s on screen never finishes and never draws.
-        await TileSource.shared.warm(spec: spec, frames: all, region: MapCanvas.region(around: location.coordinate))
+        let found = await WeatherMapService.frames(spec, near: location.coordinate)
+        guard !found.isEmpty else { loading = false; unavailable = true; return }
 
-        frames = all
-        index = all.count - 1
+        frames = found
+        index = found.count - 1
         loading = false
+        warming = true          // MapCanvas will report its camera, and `warm` takes it from there
+    }
+
+    /// MapKit cancels a renderer's downloads the moment it's hidden, so a frame
+    /// that has to fetch during its ~1.2 s on screen never finishes. Pull every
+    /// frame's tiles for the visible camera first, then start the animation.
+    private func warm(rect: MKMapRect, zoom: Int) {
+        guard let spec, !frames.isEmpty else { return }
+        warmTask?.cancel()
+        warming = true
+        playing = false
+        let frames = self.frames
+        warmTask = Task {
+            await TileSource.shared.warm(spec: spec, frames: frames, rect: rect, zoom: zoom)
+            guard !Task.isCancelled else { return }
+            warming = false
+            playing = true
+        }
     }
 
     // MARK: - Pieces
+
     private var unavailableCard: some View {
         VStack(spacing: 8) {
             Image(systemName: "globe.americas").font(.system(size: 28)).foregroundColor(Sky.muted)
-            Text(layer == .cloud ? "No satellite covers this longitude" : "Imagery unavailable right now")
+            Text(unavailableTitle)
                 .font(.system(size: 13)).foregroundColor(Sky.text)
             if layer == .cloud {
                 Text("Geostationary satellites each see one face of the Earth.\nTry the rainfall layer, which is global.")
@@ -90,6 +116,14 @@ struct WeatherMapView: View {
         }
         .padding(18).background(Sky.card.opacity(0.94))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var unavailableTitle: String {
+        switch layer {
+        case .radar: "Radar unavailable right now"
+        case .cloud: "No satellite covers this longitude"
+        case .rainfall: "Imagery unavailable right now"
+        }
     }
 
     private var scrubber: some View {
@@ -101,17 +135,21 @@ struct WeatherMapView: View {
                         .frame(width: 28, height: 28).background(Sky.tide).clipShape(Circle())
                 }
                 .accessibilityLabel(playing ? "Pause" : "Play")
+                .disabled(warming)
 
                 Slider(value: Binding(
                     get: { Double(index) },
                     set: { index = Int($0.rounded()); playing = false }
                 ), in: 0...Double(max(1, frames.count - 1)), step: 1)
                 .tint(Sky.tide)
+                .disabled(warming)
 
-                Text(currentFrame.map(timeLabel) ?? "—")
+                Text(currentFrame.map { timeLabel($0.date) } ?? "—")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(Sky.white).frame(width: 62, alignment: .trailing)
             }
+            if layer == .radar { radarLegend }
+
             Text(layer.attribution)
                 .font(.system(size: 8.5)).foregroundColor(Sky.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -120,6 +158,24 @@ struct WeatherMapView: View {
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .padding(12)
+    }
+
+    /// The provider's ramp runs beige → blue → cyan → yellow, so intensity isn't
+    /// guessable from colour alone. Without this, cyan cores read as light rain.
+    private var radarLegend: some View {
+        HStack(spacing: 6) {
+            Text("Light").font(.system(size: 8.5)).foregroundColor(Sky.muted)
+            HStack(spacing: 0) {
+                ForEach(Array(WeatherMapService.radarRamp.enumerated()), id: \.offset) { _, c in
+                    Rectangle().fill(Color(red: c.r / 255, green: c.g / 255, blue: c.b / 255))
+                }
+            }
+            .frame(height: 5)
+            .clipShape(Capsule())
+            Text("Heavy").font(.system(size: 8.5)).foregroundColor(Sky.muted)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Radar intensity scale, light to heavy")
     }
 
     private var controls: some View {
@@ -136,7 +192,7 @@ struct WeatherMapView: View {
             }
             .font(.system(size: 10)).foregroundColor(Sky.muted)
 
-            Text("A weather-system view, not a street-level radar. Local radar needs a BOM data licence.")
+            Text(layer.footnote)
                 .font(.system(size: 9.5)).foregroundColor(Sky.muted.opacity(0.8))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -151,17 +207,15 @@ struct WeatherMapView: View {
 }
 
 // MARK: - MapKit bridge
+
 private struct MapCanvas: UIViewRepresentable {
     let center: CLLocationCoordinate2D
     let spec: TileLayerSpec
-    let frames: [Date]
+    let frames: [MapFrame]
     let index: Int
-
-    /// The one definition of what's on screen — the warm-up prefetches exactly
-    /// the tiles this covers.
-    static func region(around center: CLLocationCoordinate2D) -> MKCoordinateRegion {
-        MKCoordinateRegion(center: center, latitudinalMeters: 1_400_000, longitudinalMeters: 1_400_000)
-    }
+    /// Fires once the camera stops moving, with exactly the rect and zoom MapKit
+    /// is about to request tiles for.
+    let onRegionSettled: (MKMapRect, Int) -> Void
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
@@ -171,60 +225,90 @@ private struct MapCanvas: UIViewRepresentable {
         map.showsUserLocation = true
         map.isRotateEnabled = false
         map.isPitchEnabled = false
-        // Apple's logo and legal link must stay visible — lift them above the scrubber.
-        map.layoutMargins = UIEdgeInsets(top: 0, left: 0, bottom: 74, right: 0)
-        // ~1400 km across — the scale this imagery actually resolves.
-        map.setRegion(Self.region(around: center), animated: false)
+        // Apple's logo and legal link must stay visible — lift them above the
+        // scrubber, which is taller on the radar layer because of its legend.
+        map.layoutMargins = UIEdgeInsets(top: 0, left: 0, bottom: 104, right: 0)
+        map.setRegion(MKCoordinateRegion(center: center,
+                                         latitudinalMeters: spec.regionMetres,
+                                         longitudinalMeters: spec.regionMetres), animated: false)
+        context.coordinator.onRegionSettled = onRegionSettled
         return map
     }
 
     func updateUIView(_ map: MKMapView, context: Context) {
         let c = context.coordinator
-        c.isInfrared = spec.id.contains("Infrared")
+        c.onRegionSettled = onRegionSettled
 
-        // Add every frame ONCE. Removing and re-adding an overlay on each tick
-        // cancels its in-flight tile loads, so nothing ever finishes drawing.
-        // Instead all frames stay mounted and we animate by toggling alpha.
         // MapKit calls rendererFor SYNCHRONOUSLY inside addOverlay, so `active`
         // must already be set — otherwise every renderer is built with alpha 0
         // and raising it later never makes those tiles draw.
         c.active = frames.indices.contains(index) ? frames[index] : frames.last
 
-        let key = spec.id + frames.map { "\($0.timeIntervalSince1970)" }.joined()
+        // Add every frame ONCE. Removing and re-adding an overlay on each tick
+        // cancels its in-flight tile loads, so nothing ever finishes drawing.
+        // Instead all frames stay mounted and we animate by toggling alpha.
+        let key = spec.id + frames.map(\.token).joined()
         if c.key != key {
             map.overlays.forEach(map.removeOverlay)
             c.renderers.removeAll()
             c.key = key
-            for f in frames { map.addOverlay(GIBSTileOverlay(spec: spec, frame: f), level: .aboveRoads) }
+            for f in frames { map.addOverlay(WeatherTileOverlay(spec: spec, frame: f), level: .aboveRoads) }
+            c.reportRegion(map)      // first camera — nothing has moved, so no delegate callback comes
         }
         c.applyAlphas()
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(isInfrared: spec.post == .infraredCloud) }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
-        var isInfrared = true
+        let isInfrared: Bool
         var key = ""
-        var active: Date?
-        var renderers: [Date: MKTileOverlayRenderer] = [:]
+        var active: MapFrame?
+        var renderers: [MapFrame: MKTileOverlayRenderer] = [:]
+        var onRegionSettled: ((MKMapRect, Int) -> Void)?
+        private var settle: DispatchWorkItem?
+        private var lastReported: (rect: MKMapRect, zoom: Int)?
+
+        init(isInfrared: Bool) { self.isInfrared = isInfrared }
+
+        private var visibleAlpha: CGFloat { isInfrared ? 0.95 : 0.8 }
 
         func applyAlphas() {
-            let visible: CGFloat = isInfrared ? 0.95 : 0.75
             for (frame, r) in renderers {
-                let a: CGFloat = (frame == active) ? visible : 0
+                let a: CGFloat = (frame == active) ? visibleAlpha : 0
                 if r.alpha != a { r.alpha = a; r.setNeedsDisplay() }
             }
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            guard let tile = overlay as? GIBSTileOverlay else { return MKOverlayRenderer(overlay: overlay) }
+            guard let tile = overlay as? WeatherTileOverlay else { return MKOverlayRenderer(overlay: overlay) }
             let r = MKTileOverlayRenderer(tileOverlay: tile)
-            // Cloud tiles are made transparent in GIBSTileOverlay.cloudMask, and
-            // precipitation tiles already are — so both composite normally.
-            r.blendMode = .normal
-            r.alpha = (tile.frame == active) ? (isInfrared ? 0.95 : 0.75) : 0
+            r.blendMode = .normal   // every layer is transparent by the time it reaches us
+            r.alpha = (tile.frame == active) ? visibleAlpha : 0
             renderers[tile.frame] = r
             return r
+        }
+
+        /// Debounced: a pinch fires this continuously, and each warm-up is a
+        /// burst of tile fetches we don't want to start and abandon.
+        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            settle?.cancel()
+            let work = DispatchWorkItem { [weak self, weak mapView] in
+                guard let mapView else { return }
+                self?.reportRegion(mapView)
+            }
+            settle = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        }
+
+        func reportRegion(_ map: MKMapView) {
+            guard map.bounds.width > 0 else { return }
+            let rect = map.visibleMapRect
+            let zoom = WeatherMapService.zoomLevel(visibleMapRect: rect, widthPoints: Double(map.bounds.width))
+            // A pan inside the tiles we already warmed doesn't need another sweep.
+            if let last = lastReported, last.zoom == zoom, last.rect.contains(rect) { return }
+            lastReported = (rect, zoom)
+            onRegionSettled?(rect, zoom)
         }
     }
 }

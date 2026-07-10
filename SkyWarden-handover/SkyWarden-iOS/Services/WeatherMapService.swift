@@ -1,18 +1,22 @@
 // Sky Warden — weather map tiles
 //
-// NASA GIBS serves open imagery with no API key and no licence agreement, which
-// is why it's the layer we can actually ship. Measured behaviour (2026-07):
+// Three layers, two providers. Measured behaviour (2026-07):
 //
+//   Radar (RainViewer)         10-min cadence, ~5 min latency,  useful to z10
 //   Himawari / GOES infrared   10-min cadence, ~40–60 min latency, z4–z5
-//   IMERG 30-min precipitation 30-min cadence, ~6 h latency,        z3–z5
+//   IMERG 30-min precipitation 30-min cadence, ~4–6 h latency,     z3–z5
 //
-// So this is a *weather-system* view (≈4 km/px), not a street-level radar. It
-// answers "is that band of cloud heading for me", not "is it raining on my
-// street". Honest labelling matters more than pretending otherwise.
+// Radar is the only layer that answers "is it raining on my street". The other
+// two are weather-system views at ~4 km and ~10 km, and are labelled as such.
 //
-// Real radar (BOM, RainViewer) needs a licence — BOM's anonymous feeds are
-// personal/in-house use only, and RainViewer's free tier is personal use. Those
-// slot in behind `RadarProvider` once an agreement exists.
+// LICENSING — read before shipping publicly:
+//   NASA GIBS       open, no key, no agreement. Safe to ship.
+//   RainViewer      free tier is PERSONAL USE. A public App Store release needs
+//                   their commercial plan. Fine for TestFlight on our own
+//                   devices; it is a licensing blocker, not a technical one.
+//   BOM             no public tile service at all; the anonymous feeds are
+//                   personal/in-house only. A real licence goes through
+//                   webreg@bom.gov.au.
 
 import Foundation
 import CoreLocation
@@ -21,25 +25,48 @@ import UIKit
 
 // MARK: - Layer definitions
 
+/// A single animation frame. The provider decides what `token` means: a GIBS
+/// WMTS timestamp, or a RainViewer catalogue path (its frames are content-
+/// addressed, so they can't be derived from the clock).
+struct MapFrame: Hashable {
+    let date: Date
+    let token: String
+}
+
 struct TileLayerSpec {
-    let id: String            // GIBS layer identifier
+    enum Provider { case gibs, rainViewer }
+    /// Infrared needs remapping to alpha; radar and precipitation ship transparent.
+    enum PostProcess { case none, infraredCloud }
+
+    let provider: Provider
+    let id: String              // GIBS layer identifier; unused by RainViewer
     let matrixSet: String
-    let ext: String
-    let minZ: Int
-    let maxZ: Int
-    let stepMinutes: Int      // native cadence
-    let searchBackMinutes: Int// how far back to hunt for the newest frame
+    let post: PostProcess
+    let minZ: Int               // zoom used to probe for the newest frame
+    let maxZ: Int               // deepest zoom the server actually serves
+    let stepMinutes: Int        // native cadence
+    let searchBackMinutes: Int  // how far back to hunt for the newest frame
+    let frameCount: Int
+    /// Metres across for the initial camera — radar rewards a tighter view.
+    let regionMetres: CLLocationDistance
 }
 
 enum WeatherMapLayer: String, CaseIterable, Identifiable {
-    case cloud, rainfall
+    case radar, cloud, rainfall
     var id: String { rawValue }
 
-    var title: String { self == .cloud ? "Cloud" : "Rainfall" }
+    var title: String {
+        switch self {
+        case .radar: "Radar"
+        case .cloud: "Cloud"
+        case .rainfall: "Rainfall"
+        }
+    }
 
     /// What the user is actually looking at — never oversell it.
     var caption: String {
         switch self {
+        case .radar:    "Ground radar · ~1 km · updates every 10 min"  // detail stops at z7; deeper just enlarges
         case .cloud:    "Infrared cloud top · ~4 km · updates every 10 min"
         case .rainfall: "GPM IMERG precipitation · ~10 km · ~6 h behind"
         }
@@ -47,8 +74,17 @@ enum WeatherMapLayer: String, CaseIterable, Identifiable {
 
     var attribution: String {
         switch self {
+        case .radar:    "Radar: RainViewer · rainviewer.com"
         case .cloud:    "Imagery: NASA GIBS · Himawari (JMA) / GOES (NOAA)"
         case .rainfall: "Imagery: NASA GIBS · GPM IMERG"
+        }
+    }
+
+    var footnote: String {
+        switch self {
+        case .radar:    "Radar composites national networks — including BOM's here. Gaps mean no radar in range, not no rain."
+        case .cloud:    "A weather-system view, not a street-level radar."
+        case .rainfall: "Satellite-estimated, not measured. Coarse and hours behind."
         }
     }
 
@@ -65,14 +101,23 @@ enum WeatherMapLayer: String, CaseIterable, Identifiable {
 
     func spec(forLongitude lon: Double) -> TileLayerSpec? {
         switch self {
+        case .radar:
+            // z7 is a hard ceiling: past it the free tilecache serves a tile that
+            // reads "Zoom Level Not Supported", which would be painted straight
+            // onto the map. Deeper zooms upsample z7 instead.
+            return TileLayerSpec(provider: .rainViewer, id: "radar", matrixSet: "", post: .none,
+                                 minZ: 6, maxZ: 7, stepMinutes: 10, searchBackMinutes: 0,
+                                 frameCount: 10, regionMetres: 500_000)
         case .cloud:
             guard let id = Self.geostationaryLayer(forLongitude: lon) else { return nil }
-            return TileLayerSpec(id: id, matrixSet: "GoogleMapsCompatible_Level6", ext: "png",
-                                 minZ: 4, maxZ: 5, stepMinutes: 10, searchBackMinutes: 180)
+            return TileLayerSpec(provider: .gibs, id: id, matrixSet: "GoogleMapsCompatible_Level6",
+                                 post: .infraredCloud, minZ: 4, maxZ: 5, stepMinutes: 10,
+                                 searchBackMinutes: 180, frameCount: 10, regionMetres: 1_400_000)
         case .rainfall:
-            return TileLayerSpec(id: "IMERG_Precipitation_Rate_30min",
-                                 matrixSet: "GoogleMapsCompatible_Level6", ext: "png",
-                                 minZ: 3, maxZ: 5, stepMinutes: 30, searchBackMinutes: 720)
+            return TileLayerSpec(provider: .gibs, id: "IMERG_Precipitation_Rate_30min",
+                                 matrixSet: "GoogleMapsCompatible_Level6", post: .none,
+                                 minZ: 3, maxZ: 5, stepMinutes: 30, searchBackMinutes: 720,
+                                 frameCount: 6, regionMetres: 1_400_000)
         }
     }
 }
@@ -80,7 +125,20 @@ enum WeatherMapLayer: String, CaseIterable, Identifiable {
 // MARK: - Service
 
 struct WeatherMapService {
-    static let base = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best"
+    static let gibsBase = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best"
+    static let rainViewerCatalogue = "https://api.rainviewer.com/public/weather-maps.json"
+
+    /// The free tilecache ignores this (and the snow flag) — measured 2026-07:
+    /// tiles for colour 0, 4 and 7 are byte-identical; only the `smooth` flag
+    /// changes the output. Its fixed ramp is beige (light) → blue → cyan →
+    /// yellow (heaviest), which is why the Map tab ships a legend: a user would
+    /// otherwise read cyan as "light".
+    static let radarColourScheme = 4
+
+    /// Sampled from the tiles themselves, weakest to strongest.
+    static let radarRamp: [(r: Double, g: Double, b: Double)] = [
+        (146, 136, 113), (206, 192, 135), (0, 119, 170), (81, 197, 232), (255, 224, 0),
+    ]
 
     static let stamp: DateFormatter = {
         let f = DateFormatter()
@@ -90,29 +148,60 @@ struct WeatherMapService {
         return f
     }()
 
-    /// GIBS is WMTS: the path is {z}/{row}/{col} — row is y, col is x.
-    static func tileURL(_ spec: TileLayerSpec, frame: Date, z: Int, x: Int, y: Int) -> URL? {
-        URL(string: "\(base)/\(spec.id)/default/\(stamp.string(from: frame))/\(spec.matrixSet)/\(z)/\(y)/\(x).\(spec.ext)")
+    static func tileURL(_ spec: TileLayerSpec, frame: MapFrame, z: Int, x: Int, y: Int) -> URL? {
+        switch spec.provider {
+        case .gibs:
+            // GIBS is WMTS: the path is {z}/{row}/{col} — row is y, col is x.
+            return URL(string: "\(gibsBase)/\(spec.id)/default/\(frame.token)/\(spec.matrixSet)/\(z)/\(y)/\(x).png")
+        case .rainViewer:
+            // token is the full frame prefix, e.g. https://…/v2/radar/9f16bd631a61
+            return URL(string: "\(frame.token)/256/\(z)/\(x)/\(y)/\(radarColourScheme)/1_1.png")
+        }
     }
 
-    /// Floors a date to the layer's native cadence.
-    static func floor(_ date: Date, toStep minutes: Int) -> Date {
-        let bucket = Double(minutes * 60)
-        let t = (date.timeIntervalSince1970 / bucket).rounded(.down)
-        return Date(timeIntervalSince1970: t * bucket)
+    // MARK: Frame discovery
+
+    static func frames(_ spec: TileLayerSpec, near coord: CLLocationCoordinate2D) async -> [MapFrame] {
+        switch spec.provider {
+        case .rainViewer: return await rainViewerFrames(spec)
+        case .gibs:       return await gibsFrames(spec, near: coord)
+        }
     }
 
-    /// Latency varies (GOES has gaps; Himawari runs ~40–60 min behind), so find
-    /// the newest frame that actually serves a tile instead of assuming a lag.
-    static func latestFrame(_ spec: TileLayerSpec, near coord: CLLocationCoordinate2D) async -> Date? {
+    /// RainViewer frame paths are content-addressed hashes, so they must be read
+    /// from the catalogue rather than derived from the clock.
+    static func rainViewerFrames(_ spec: TileLayerSpec) async -> [MapFrame] {
+        guard let url = URL(string: rainViewerCatalogue),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let host = root["host"] as? String,
+              let radar = root["radar"] as? [String: Any],
+              let past = radar["past"] as? [[String: Any]]
+        else { return [] }
+
+        return past.suffix(spec.frameCount).compactMap { entry in
+            guard let t = entry["time"] as? Double, let path = entry["path"] as? String else { return nil }
+            return MapFrame(date: Date(timeIntervalSince1970: t), token: host + path)
+        }
+    }
+
+    /// GIBS latency varies (GOES has gaps; Himawari runs ~40–60 min behind), so
+    /// find the newest frame that actually serves a tile instead of assuming a lag.
+    static func gibsFrames(_ spec: TileLayerSpec, near coord: CLLocationCoordinate2D) async -> [MapFrame] {
+        guard let latest = await latestGIBSFrame(spec, near: coord) else { return [] }
+        return frameDates(endingAt: latest, spec: spec, count: spec.frameCount)
+            .map { MapFrame(date: $0, token: stamp.string(from: $0)) }
+    }
+
+    static func latestGIBSFrame(_ spec: TileLayerSpec, near coord: CLLocationCoordinate2D) async -> Date? {
         let z = spec.minZ
         let (x, y) = tileIndex(coord, z: z)
         var candidate = floor(Date(), toStep: spec.stepMinutes)
         let steps = spec.searchBackMinutes / spec.stepMinutes
 
         for _ in 0..<steps {
-            if let url = tileURL(spec, frame: candidate, z: z, x: x, y: y),
-               await tileExists(url) { return candidate }
+            let probe = MapFrame(date: candidate, token: stamp.string(from: candidate))
+            if let url = tileURL(spec, frame: probe, z: z, x: x, y: y), await tileExists(url) { return candidate }
             candidate = candidate.addingTimeInterval(-Double(spec.stepMinutes * 60))
         }
         return nil
@@ -127,10 +216,19 @@ struct WeatherMapService {
         return http.statusCode == 200
     }
 
+    /// Floors a date to the layer's native cadence.
+    static func floor(_ date: Date, toStep minutes: Int) -> Date {
+        let bucket = Double(minutes * 60)
+        let t = (date.timeIntervalSince1970 / bucket).rounded(.down)
+        return Date(timeIntervalSince1970: t * bucket)
+    }
+
     /// `count` frames ending at `latest`, oldest first.
-    static func frames(endingAt latest: Date, spec: TileLayerSpec, count: Int) -> [Date] {
+    static func frameDates(endingAt latest: Date, spec: TileLayerSpec, count: Int) -> [Date] {
         (0..<count).map { latest.addingTimeInterval(-Double($0 * spec.stepMinutes * 60)) }.reversed()
     }
+
+    // MARK: Tile geometry
 
     /// Slippy-map tile index for a coordinate.
     static func tileIndex(_ c: CLLocationCoordinate2D, z: Int) -> (x: Int, y: Int) {
@@ -141,25 +239,42 @@ struct WeatherMapService {
         return (max(0, x), max(0, y))
     }
 
-    /// The deepest tile GIBS actually serves that *contains* the requested one,
-    /// plus where inside it the request sits.
+    /// The deepest tile the server actually serves that *contains* the requested
+    /// one, plus where inside it the request sits.
     ///
-    /// MapKit asks for z6 on a phone showing ~1400 km, but these layers stop at
-    /// z5. Setting `MKTileOverlay.maximumZ` does NOT make MapKit scale the last
-    /// available level up — it just stops requesting tiles entirely, and the
-    /// overlay silently never draws. So we resolve the ancestor ourselves.
+    /// MapKit asks for zooms past a layer's deepest level, and
+    /// `MKTileOverlay.maximumZ` does NOT make it scale the last one up — it makes
+    /// MapKit stop requesting tiles entirely, and the overlay silently never
+    /// draws. So we resolve the ancestor ourselves.
     ///
-    /// `dz` is how many levels we climbed; the request occupies cell
-    /// (`ox`, `oy`) of the 2^dz × 2^dz grid inside the ancestor, `oy` counted
-    /// from the top.
+    /// `dz` is how many levels we climbed; the request occupies cell (`ox`, `oy`)
+    /// of the 2^dz × 2^dz grid inside the ancestor, `oy` counted from the top.
     static func ancestor(z: Int, x: Int, y: Int, maxZ: Int)
     -> (z: Int, x: Int, y: Int, dz: Int, ox: Int, oy: Int) {
         let dz = max(0, z - maxZ)
         let sx = x >> dz, sy = y >> dz
         return (z - dz, sx, sy, dz, x - (sx << dz), y - (sy << dz))
     }
-}
 
+    /// The zoom MapKit will request for a given camera. Derived from the map
+    /// itself rather than guessed, so the warm-up caches exactly the tiles that
+    /// are about to be asked for.
+    static func zoomLevel(visibleMapRect rect: MKMapRect, widthPoints: Double) -> Int {
+        guard rect.size.width > 0, widthPoints > 0 else { return 0 }
+        let z = log2(MKMapSize.world.width / rect.size.width * widthPoints / 256)
+        return max(0, Int(ceil(z)))
+    }
+
+    /// Inclusive tile bounds covering a map rect at zoom `z`.
+    static func tileBounds(_ rect: MKMapRect, z: Int) -> (x0: Int, x1: Int, y0: Int, y1: Int) {
+        let n = Double(1 << z)
+        let per = MKMapSize.world.width / n
+        let x0 = Int((rect.minX / per).rounded(.down)), x1 = Int(((rect.maxX - 1) / per).rounded(.down))
+        let y0 = Int((rect.minY / per).rounded(.down)), y1 = Int(((rect.maxY - 1) / per).rounded(.down))
+        let hi = (1 << z) - 1
+        return (max(0, x0), min(hi, x1), max(0, y0), min(hi, y1))
+    }
+}
 
 // MARK: - Source-tile cache
 //
@@ -169,13 +284,14 @@ struct WeatherMapService {
 // layer stayed blank forever. Caching the *rendered* tile didn't help — the
 // download never completed to be cached.
 //
-// So cache the upstream tile instead, and warm it before playback. A frame is
-// only a handful of tiles at z5 (each spans ~1000 km), so this is cheap, and
-// afterwards `loadTile` answers from memory without touching the network.
+// So cache the upstream tile instead, and warm every frame before playback.
+// Afterwards `loadTile` answers from memory without touching the network.
 final class TileSource {
     static let shared = TileSource()
     private let images = NSCache<NSURL, UIImage>()
-    private let missing = NSCache<NSURL, NSNumber>()   // GIBS 404s outside the satellite disc
+    private let missing = NSCache<NSURL, NSNumber>()   // tiles the provider genuinely doesn't have
+
+    init() { images.totalCostLimit = 96 * 1024 * 1024 }
 
     func cached(_ url: URL) -> CGImage? { images.object(forKey: url as NSURL)?.cgImage }
     func isKnownMissing(_ url: URL) -> Bool { missing.object(forKey: url as NSURL) != nil }
@@ -192,27 +308,22 @@ final class TileSource {
             missing.setObject(1, forKey: url as NSURL)
             return nil
         }
-        images.setObject(image, forKey: url as NSURL)
+        images.setObject(image, forKey: url as NSURL, cost: data.count)
         return cg
     }
 
-    /// Pulls every source tile the given frames need to cover `region`, so the
-    /// animation can flip between them without a single network round-trip.
-    func warm(spec: TileLayerSpec, frames: [Date], region: MKCoordinateRegion) async {
-        let z = spec.maxZ
-        let north = region.center.latitude + region.span.latitudeDelta / 2
-        let south = region.center.latitude - region.span.latitudeDelta / 2
-        let west = region.center.longitude - region.span.longitudeDelta / 2
-        let east = region.center.longitude + region.span.longitudeDelta / 2
-        // Mercator blows up at the poles; the imagery stops well before them anyway.
-        let (x0, y0) = WeatherMapService.tileIndex(.init(latitude: min(84, north), longitude: west), z: z)
-        let (x1, y1) = WeatherMapService.tileIndex(.init(latitude: max(-84, south), longitude: east), z: z)
-        let n = 1 << z
+    /// Pulls every source tile the given frames need to cover `rect` at the zoom
+    /// MapKit is about to request, so the animation can flip between frames
+    /// without a single network round-trip.
+    func warm(spec: TileLayerSpec, frames: [MapFrame], rect: MKMapRect, zoom: Int) async {
+        let z = min(zoom, spec.maxZ)
+        let b = WeatherMapService.tileBounds(rect, z: z)
+        guard b.x1 >= b.x0, b.y1 >= b.y0 else { return }
 
         var urls: [URL] = []
         for f in frames {
-            for x in x0...max(x0, x1) where x < n {
-                for y in y0...max(y0, y1) where y < n {
+            for x in b.x0...b.x1 {
+                for y in b.y0...b.y1 {
                     if let u = WeatherMapService.tileURL(spec, frame: f, z: z, x: x, y: y) { urls.append(u) }
                 }
             }
@@ -225,12 +336,11 @@ final class TileSource {
 
 // MARK: - MapKit overlay
 
-final class GIBSTileOverlay: MKTileOverlay {
+final class WeatherTileOverlay: MKTileOverlay {
     let spec: TileLayerSpec
-    let frame: Date
-    private var isInfrared: Bool { spec.id.contains("Infrared") }
+    let frame: MapFrame
 
-    init(spec: TileLayerSpec, frame: Date) {
+    init(spec: TileLayerSpec, frame: MapFrame) {
         self.spec = spec
         self.frame = frame
         super.init(urlTemplate: nil)
@@ -242,28 +352,29 @@ final class GIBSTileOverlay: MKTileOverlay {
         canReplaceMapContent = false
     }
 
-    /// Rendered, masked tiles — keyed by the *requested* path, since several
-    /// requests share one upstream ancestor.
+    /// Rendered tiles — keyed by the *requested* path, since several requests
+    /// can share one upstream ancestor.
     private static let rendered = NSCache<NSString, NSData>()
 
     override func loadTile(at path: MKTileOverlayPath, result: @escaping (Data?, Error?) -> Void) {
-        let key = "\(spec.id)|\(frame.timeIntervalSince1970)|\(path.z)/\(path.x)/\(path.y)" as NSString
+        let key = "\(spec.id)|\(frame.token)|\(path.z)/\(path.x)/\(path.y)" as NSString
         if let hit = Self.rendered.object(forKey: key) { result(hit as Data, nil); return }
 
         let a = WeatherMapService.ancestor(z: path.z, x: path.x, y: path.y, maxZ: spec.maxZ)
         guard let url = WeatherMapService.tileURL(spec, frame: frame, z: a.z, x: a.x, y: a.y) else {
             result(nil, nil); return
         }
+        let post = spec.post
 
         // Warmed by TileSource.warm, so this is normally a synchronous cache hit
         // and MapKit gets its tile before it can cancel us.
         func finish(_ source: CGImage?) {
             guard let source,
                   let tile = Self.upsample(source, dz: a.dz, ox: a.ox, oy: a.oy),
-                  let out = isInfrared ? Self.cloudMask(tile) : UIImage(cgImage: tile).pngData()
+                  let out = post == .infraredCloud ? Self.cloudMask(tile) : UIImage(cgImage: tile).pngData()
             else {
-                // Draw nothing outside the satellite disc — never an opaque slab,
-                // which would wash out the whole basemap.
+                // Draw nothing where the provider has no data — never an opaque
+                // slab, which would wash out the whole basemap.
                 result(nil, nil); return
             }
             Self.rendered.setObject(out as NSData, forKey: key)
