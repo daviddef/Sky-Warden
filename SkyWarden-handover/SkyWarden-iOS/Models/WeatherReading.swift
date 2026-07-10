@@ -1,47 +1,92 @@
-// SkyWarden — WeatherReading
-// Raw data from a single weather source
+// Sky Warden — WeatherReading
+// Raw data from a single weather source.
+//
+// A "source" is a genuinely independent forecast, not a reseller. Six of them are
+// the world's major numerical weather models (served by Open-Meteo in one keyless
+// call); the rest are commercial/platform forecasts and a national observation
+// network. Independence is the point: sources that share an upstream model agree
+// because they're the same model, which would inflate the confidence score.
+//
+// Sources report only what they measure. Anything a source doesn't publish is
+// `nil` — never a stand-in zero, which would corrupt the consensus and raise a
+// false "sources disagree" flag.
 
 import Foundation
 
 // MARK: - Source identity
 enum WeatherSource: String, CaseIterable, Identifiable {
-    case openMeteo   = "Open-Meteo"
+    // Independent numerical weather models (one Open-Meteo request, no key)
+    case ecmwf = "ECMWF"
+    case gfs   = "GFS"
+    case icon  = "ICON"
+    case metno = "MET Norway"
+    case gem   = "GEM"
+    case ukmo  = "UK Met Office"
+    // Commercial / platform forecasts
     case openWeather = "OpenWeather"
     case weatherKit  = "WeatherKit"
-    case bom         = "BOM"
+    // National observation network
+    case bom = "BOM"
 
     var id: String { rawValue }
+
+    /// Open-Meteo model identifier, for the sources that are NWP models.
+    var openMeteoModel: String? {
+        switch self {
+        case .ecmwf: "ecmwf_ifs025"
+        case .gfs:   "gfs_seamless"
+        case .icon:  "icon_seamless"
+        case .metno: "metno_seamless"
+        case .gem:   "gem_seamless"
+        case .ukmo:  "ukmo_seamless"
+        default:     nil
+        }
+    }
+
+    /// The six models fetched together in a single Open-Meteo request.
+    static var models: [WeatherSource] { allCases.filter { $0.openMeteoModel != nil } }
+
     var short: String {
         switch self {
-        case .openMeteo:   return "OM"
-        case .openWeather: return "OW"
-        case .weatherKit:  return "WK"
-        case .bom:         return "BOM"
+        case .ecmwf: "ECM"; case .gfs: "GFS"; case .icon: "ICON"
+        case .metno: "MET"; case .gem: "GEM"; case .ukmo: "UKMO"
+        case .openWeather: "OW"; case .weatherKit: "WK"; case .bom: "BOM"
         }
     }
-    // Source identity palette (HANDOVER.md → Design tokens)
+
     var colorHex: String {
         switch self {
-        case .openMeteo:   return "5BA3D4"   // blue
-        case .openWeather: return "F5A623"   // amber
-        case .weatherKit:  return "3DD68C"   // Apple green
-        case .bom:         return "C084FC"   // purple
+        case .ecmwf:       "5BA3D4"   // blue
+        case .gfs:         "4ECDC4"   // teal
+        case .icon:        "7DD87D"   // light green
+        case .metno:       "6EA8FE"   // periwinkle
+        case .gem:         "E0A3F5"   // light purple
+        case .ukmo:        "F58F6B"   // coral
+        case .openWeather: "F5A623"   // amber
+        case .weatherKit:  "3DD68C"   // Apple green
+        case .bom:         "C084FC"   // purple
         }
     }
+
     var requiresAPIKey: Bool {
         switch self {
-        case .openWeather: return true
-        case .weatherKit:  return true       // Apple Developer account + capability
-        default:           return false
+        case .openWeather, .weatherKit: true
+        default: false
         }
     }
-    /// Human-readable setup note shown in the Sources tab.
+
+    /// Who runs the model / service — shown in Settings and the Sources tab.
     var setupNote: String {
         switch self {
-        case .openMeteo:   return "Free · No API key required"
-        case .openWeather: return "Free tier: 1,000 calls/day"
-        case .weatherKit:  return "Free with Apple Developer account"
-        case .bom:         return "Free · Australian Bureau of Meteorology"
+        case .ecmwf: "European Centre · global model · free"
+        case .gfs:   "NOAA, United States · global model · free"
+        case .icon:  "DWD, Germany · global model · free"
+        case .metno: "MET Norway · global model · free"
+        case .gem:   "Environment Canada · global model · free"
+        case .ukmo:  "UK Met Office · global model · free"
+        case .openWeather: "Free tier: 1,000 calls/day"
+        case .weatherKit:  "Free with Apple Developer account"
+        case .bom:         "Australian Bureau of Meteorology · observations"
         }
     }
 }
@@ -106,7 +151,9 @@ struct WeatherReading: Identifiable {
     let tempMax: Double?         // °C (daily)
 
     // Precipitation
-    let rainProbability: Double  // 0–100
+    /// `nil` when the source publishes no probability of precipitation
+    /// (UK Met Office; BOM, which reports observations rather than a forecast).
+    let rainProbability: Double? // 0–100
     let rainAmount: Double       // mm/hr
 
     // Wind
@@ -116,9 +163,7 @@ struct WeatherReading: Identifiable {
 
     // Atmosphere
     let humidity: Double         // 0–100
-    /// `nil` when the source doesn't measure UV (e.g. BOM observations).
-    /// Never fake this with 0 — it corrupts the consensus and shows a false
-    /// "sources disagree" flag on the UV ring.
+    /// `nil` when the source doesn't measure UV (most NWP models, BOM).
     let uvIndex: Double?
     let visibility: Double?      // km
     let pressure: Double?        // hPa
@@ -126,15 +171,10 @@ struct WeatherReading: Identifiable {
     // Condition
     let condition: WeatherCondition
 
-    // Hourly forecast (next 24h)
     var hourlyForecast: [HourlyReading]
-
-    // Daily forecast (next 7 days)
     var dailyForecast: [DailyReading]
 
-    var isStale: Bool {
-        Date().timeIntervalSince(fetchedAt) > 600 // 10 minutes
-    }
+    var isStale: Bool { Date().timeIntervalSince(fetchedAt) > 600 }
 }
 
 // MARK: - Hourly reading
@@ -142,11 +182,11 @@ struct HourlyReading: Identifiable {
     let id = UUID()
     let time: Date
     let temperature: Double
-    let rainProbability: Double
+    let rainProbability: Double?
     let rainAmount: Double
     let windSpeed: Double
     let condition: WeatherCondition
-    let uvIndex: Double
+    let uvIndex: Double?
 }
 
 // MARK: - Daily reading
@@ -155,11 +195,11 @@ struct DailyReading: Identifiable {
     let date: Date
     let tempMax: Double
     let tempMin: Double
-    let rainProbability: Double
+    let rainProbability: Double?
     let rainAmount: Double
     let windSpeed: Double
     let condition: WeatherCondition
-    let uvIndexMax: Double
+    let uvIndexMax: Double?
     let sunrise: Date?
     let sunset: Date?
 }

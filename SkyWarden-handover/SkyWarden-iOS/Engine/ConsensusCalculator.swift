@@ -13,10 +13,11 @@ struct ConsensusCalculator {
         let (disagreements, confidence, worst) = engine.analyse(readings)
 
         let temps     = readings.map(\.temperature)
-        let rains     = readings.map(\.rainProbability)
         let winds     = readings.map(\.windSpeed)
         let humidity  = readings.map(\.humidity)
-        // Only average sources that actually measure UV (BOM reports none).
+        // Average only the sources that actually publish these. UKMO and BOM
+        // report no rain probability; most NWP models report no UV.
+        let rains     = readings.compactMap(\.rainProbability)
         let uvValues  = readings.compactMap(\.uvIndex)
 
         let consensusTemp  = trimmedMean(temps)
@@ -106,27 +107,28 @@ struct ConsensusCalculator {
     // MARK: - Forecast merging
 
     private func mergeHourly(_ readings: [WeatherReading]) -> [ConsensusHourly] {
-        // Use Open-Meteo as primary (most detailed hourly), flag hours where sources differ
-        guard let primary = readings.first(where: { $0.source == .openMeteo })
+        // ECMWF drives the detailed hourly view; other models flag divergent hours.
+        guard let primary = readings.first(where: { $0.source == OpenMeteoService.primary })
                          ?? readings.first else { return [] }
 
         return primary.hourlyForecast.map { hour in
             let otherReadings = readings.filter { $0.source != primary.source }
             let hasDisagreement = otherReadings.contains { other in
-                // Compare with same-hour data from other sources
-                if let match = other.hourlyForecast.min(by: {
+                guard let match = other.hourlyForecast.min(by: {
                     abs($0.time.timeIntervalSince(hour.time)) <
                     abs($1.time.timeIntervalSince(hour.time))
-                }) {
-                    return abs(match.temperature - hour.temperature) > 2 ||
-                           abs(match.rainProbability - hour.rainProbability) > 15
+                }) else { return false }
+                if abs(match.temperature - hour.temperature) > 2 { return true }
+                // Only compare rain when both sources published a probability.
+                if let a = match.rainProbability, let b = hour.rainProbability {
+                    return abs(a - b) > 15
                 }
                 return false
             }
             return ConsensusHourly(
                 time:             hour.time,
                 temperature:      hour.temperature,
-                rainProbability:  hour.rainProbability,
+                rainProbability:  hour.rainProbability ?? 0,
                 condition:        hour.condition,
                 windSpeed:        hour.windSpeed,
                 hasDisagreement:  hasDisagreement
@@ -135,7 +137,7 @@ struct ConsensusCalculator {
     }
 
     private func mergeDaily(_ readings: [WeatherReading]) -> [ConsensusDaily] {
-        guard let primary = readings.first(where: { $0.source == .openMeteo })
+        guard let primary = readings.first(where: { $0.source == OpenMeteoService.primary })
                          ?? readings.first else { return [] }
 
         return primary.dailyForecast.enumerated().map { (index, day) in
@@ -155,7 +157,7 @@ struct ConsensusCalculator {
                 date:             day.date,
                 tempMax:          day.tempMax,
                 tempMin:          day.tempMin,
-                rainProbability:  day.rainProbability,
+                rainProbability:  day.rainProbability ?? 0,
                 windSpeed:        day.windSpeed,
                 condition:        day.condition,
                 hasDisagreement:  hasDisagreement

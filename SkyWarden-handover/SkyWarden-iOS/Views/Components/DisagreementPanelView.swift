@@ -171,12 +171,12 @@ extension Date {
                     FieldDisagreement(
                         fieldKey: "temperature", fieldLabel: "Temperature",
                         severity: .minor,
-                        perSource: [.openMeteo: "24°C", .openWeather: "26°C", .bom: "24°C"]
+                        perSource: [.ecmwf: "24°C", .gfs: "26°C", .bom: "24°C"]
                     ),
                     FieldDisagreement(
                         fieldKey: "rain", fieldLabel: "Rain chance",
                         severity: .major,
-                        perSource: [.openMeteo: "15%", .openWeather: "55%", .bom: "10%"]
+                        perSource: [.ecmwf: "15%", .gfs: "55%", .ukmo: "10%"]
                     ),
                 ])
                 DisagreementBadgeButton(

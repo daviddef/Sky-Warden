@@ -81,15 +81,6 @@ struct BOMService {
         // "0.0" when dry, "-" when unavailable.
         let recentRain = obs.rainTrace.flatMap(Double.init) ?? 0
 
-        // BOM observations are current conditions, not a forecast — this is a
-        // coarse likelihood derived from recent rainfall and humidity.
-        let rainProb: Double = {
-            if recentRain > 5 { return 80 }
-            if recentRain > 1 { return 50 }
-            if humidity > 80  { return 30 }
-            return 10
-        }()
-
         return WeatherReading(
             source:          .bom,
             fetchedAt:       Date(),
@@ -97,8 +88,12 @@ struct BOMService {
             feelsLike:       apparent,
             tempMin:         nil,   // observation feed carries no forecast
             tempMax:         nil,
-            rainProbability: rainProb,
-            rainAmount:      recentRain,
+            // BOM reports observations, not a forecast. We used to synthesise a
+            // probability from humidity and recent rainfall — a number BOM never
+            // published, which then fed the consensus and could raise a
+            // "sources disagree" flag against fiction. Report nothing instead.
+            rainProbability: nil,
+            rainAmount:      recentRain,   // rain_trace is genuinely observed
             windSpeed:       windSpeed,
             windGust:        obs.gustKmh,
             windDirection:   Self.degrees(fromCompass: obs.windDir) ?? 0,

@@ -104,21 +104,15 @@ struct SourcesView: View {
 
     private var confidenceCard: some View {
         let color = confidence >= 0.8 ? Sky.green : confidence >= 0.5 ? Sky.amber : Sky.red
-        return VStack(spacing: 8) {
+        let active = Set(consensus.sources)
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("📡 SOURCE CONFIDENCE").font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
                 Spacer()
-                HStack(spacing: 4) {
-                    ForEach(WeatherSource.allCases) { s in
-                        HStack(spacing: 3) {
-                            Circle().fill(Color(hex: s.colorHex)).frame(width: 5, height: 5)
-                            Text(s.short).font(.system(size: 8)).foregroundColor(Sky.muted)
-                        }
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 5))
-                    }
-                }
+                Text("\(active.count) of \(WeatherSource.allCases.count) reporting")
+                    .font(.system(size: 9)).foregroundColor(Sky.muted)
             }
+
             HStack(spacing: 8) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -127,7 +121,23 @@ struct SourcesView: View {
                     }
                 }
                 .frame(height: 6)
-                Text("\(Int((confidence * 100).rounded()))%").font(.system(size: 13, weight: .bold)).foregroundColor(color)
+                Text("\(Int((confidence * 100).rounded()))%")
+                    .font(.system(size: 13, weight: .bold)).foregroundColor(color)
+            }
+
+            // Nine sources don't fit on one line — wrap them, and dim the ones
+            // that didn't respond so it's obvious what fed this consensus.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 58), spacing: 5)], alignment: .leading, spacing: 5) {
+                ForEach(WeatherSource.allCases) { s in
+                    HStack(spacing: 3) {
+                        Circle().fill(Color(hex: s.colorHex)).frame(width: 5, height: 5)
+                        Text(s.short).font(.system(size: 8)).foregroundColor(Sky.muted).lineLimit(1)
+                    }
+                    .padding(.horizontal, 5).padding(.vertical, 3)
+                    .frame(maxWidth: .infinity)
+                    .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 5))
+                    .opacity(active.contains(s) ? 1 : 0.32)
+                }
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)

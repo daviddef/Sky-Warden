@@ -70,8 +70,12 @@ struct DisagreementEngine {
     }
 
     private func checkRain(_ readings: [WeatherReading]) -> FieldDisagreement? {
-        let rains = readings.map(\.rainProbability)
-        guard let spread = spread(rains) else { return nil }
+        // Only sources that actually publish a probability take part. UKMO and
+        // BOM don't, and comparing against a source that said nothing is meaningless.
+        let entries = readings.compactMap { r -> (WeatherSource, Double)? in
+            r.rainProbability.map { (r.source, $0) }
+        }
+        guard entries.count >= 2, let spread = spread(entries.map(\.1)) else { return nil }
 
         let severity: DisagreementSeverity
         switch spread {
@@ -81,7 +85,7 @@ struct DisagreementEngine {
         }
 
         let perSource = Dictionary(
-            uniqueKeysWithValues: readings.map { ($0.source, "\(Int($0.rainProbability.rounded()))%") }
+            uniqueKeysWithValues: entries.map { ($0.0, "\(Int($0.1.rounded()))%") }
         )
         return FieldDisagreement(
             fieldKey: "rain",
@@ -171,10 +175,9 @@ struct DisagreementEngine {
 
     // MARK: - Helpers
 
-    private func spread(_ values: [Double]) -> Double? {
-        guard let min = values.min(), let max = values.max() else { return nil }
-        return max - min
-    }
+    /// Trimmed once there are 4+ sources, so adding models doesn't mechanically
+    /// inflate the measured disagreement. See Shared/Dispersion.swift.
+    private func spread(_ values: [Double]) -> Double? { robustSpread(values) }
 
     /// Groups conditions into coarse categories (adjacent fine categories don't trigger a flag)
     private func conditionCategory(_ condition: WeatherCondition) -> Int {

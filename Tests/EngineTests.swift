@@ -10,7 +10,7 @@ import CoreLocation
 private func reading(
     _ source: WeatherSource,
     temp: Double = 20,
-    rain: Double = 10,
+    rain: Double? = 10,
     wind: Double = 10,
     humidity: Double = 50,
     uv: Double? = 5,
@@ -85,8 +85,8 @@ final class ConsensusCalculatorTests: XCTestCase {
     func testTrimmedMeanDropsOutlierWhenThreeOrMoreSources() {
         // 20, 21, 40 → drop high and low, keep 21.
         let c = ConsensusCalculator().calculate(from: [
-            reading(.openMeteo, temp: 20),
-            reading(.openWeather, temp: 21),
+            reading(.ecmwf, temp: 20),
+            reading(.gfs, temp: 21),
             reading(.bom, temp: 40, uv: nil),
         ])
         XCTAssertEqual(c.temperature, 21, accuracy: 0.001)
@@ -94,8 +94,8 @@ final class ConsensusCalculatorTests: XCTestCase {
 
     func testPlainMeanWithTwoSources() {
         let c = ConsensusCalculator().calculate(from: [
-            reading(.openMeteo, temp: 20),
-            reading(.openWeather, temp: 24),
+            reading(.ecmwf, temp: 20),
+            reading(.gfs, temp: 24),
         ])
         XCTAssertEqual(c.temperature, 22, accuracy: 0.001)
     }
@@ -104,7 +104,7 @@ final class ConsensusCalculatorTests: XCTestCase {
     /// consensus UV and raised a false "sources disagree" flag on the UV ring.
     func testSourceWithoutUVIsExcludedFromUVConsensus() {
         let c = ConsensusCalculator().calculate(from: [
-            reading(.openMeteo, uv: 6),
+            reading(.ecmwf, uv: 6),
             reading(.bom, uv: nil),
         ])
         XCTAssertEqual(c.uvIndex, 6, accuracy: 0.001, "BOM's absent UV must not drag the average to 3")
@@ -112,7 +112,7 @@ final class ConsensusCalculatorTests: XCTestCase {
 
     func testSourceWithoutUVProducesNoUVDisagreement() {
         let data = ComfortData(consensus: ConsensusCalculator().calculate(from: [
-            reading(.openMeteo, uv: 6),
+            reading(.ecmwf, uv: 6),
             reading(.bom, uv: nil),
         ]))
         let uvRing = data.ring(.uv)!
@@ -123,8 +123,8 @@ final class ConsensusCalculatorTests: XCTestCase {
 
     func testDisagreementIsFlaggedWhenSourcesActuallyDiffer() {
         let data = ComfortData(consensus: ConsensusCalculator().calculate(from: [
-            reading(.openMeteo, temp: 18),
-            reading(.openWeather, temp: 24),   // 6° spread, threshold 2 → major (≥2×)
+            reading(.ecmwf, temp: 18),
+            reading(.gfs, temp: 24),   // 6° spread, threshold 2 → major (≥2×)
         ]))
         let temp = data.ring(.temp)!
         XCTAssertEqual(temp.spread, 6, accuracy: 0.001)
@@ -132,11 +132,70 @@ final class ConsensusCalculatorTests: XCTestCase {
         XCTAssertTrue(temp.isMajor)
     }
 
+    /// UKMO publishes no precipitation probability and BOM reports observations,
+    /// not a forecast. Neither may drag the rain consensus or manufacture a flag.
+    func testSourceWithoutRainProbabilityIsExcluded() {
+        let c = ConsensusCalculator().calculate(from: [
+            reading(.ecmwf, rain: 80),
+            reading(.ukmo, rain: nil),
+            reading(.bom, rain: nil, uv: nil),
+        ])
+        XCTAssertEqual(c.rainProbability, 80, accuracy: 0.001,
+                       "absent probabilities must not be averaged in as zero")
+
+        let ring = ComfortData(consensus: c).ring(.rain)!
+        XCTAssertEqual(ring.perSource.count, 1)
+        XCTAssertFalse(ring.hasFlag, "no disagreement against sources that published nothing")
+    }
+
+    func testRainDisagreementStillFlaggedBetweenSourcesThatDoPublish() {
+        // Real spread seen in the wild: GEM 5% vs GFS 100% for the same day.
+        let data = ComfortData(consensus: ConsensusCalculator().calculate(from: [
+            reading(.gem, rain: 5), reading(.gfs, rain: 100), reading(.ukmo, rain: nil),
+        ]))
+        let ring = data.ring(.rain)!
+        XCTAssertEqual(ring.perSource.count, 2)
+        XCTAssertTrue(ring.isMajor)
+    }
+
+    /// The six model sources must be exactly the ones with an Open-Meteo model id.
+    func testModelSourcesAreIndependentAndDistinct() {
+        XCTAssertEqual(WeatherSource.models.count, 6)
+        XCTAssertEqual(Set(WeatherSource.models.compactMap(\.openMeteoModel)).count, 6)
+        XCTAssertNil(WeatherSource.bom.openMeteoModel)
+        XCTAssertNil(WeatherSource.weatherKit.openMeteoModel)
+        // Every source needs a distinct colour so the dial's dots stay readable.
+        XCTAssertEqual(Set(WeatherSource.allCases.map(\.colorHex)).count, WeatherSource.allCases.count)
+        XCTAssertEqual(Set(WeatherSource.allCases.map(\.short)).count, WeatherSource.allCases.count)
+    }
+
+    /// Range grows with sample count, so it can't be the disagreement measure
+    /// once we fetch six models — otherwise more information looks like less
+    /// confidence. With 4+ sources we trim the extremes first.
+    func testRobustSpreadTrimsExtremesOnceThereAreFourSources() {
+        XCTAssertEqual(robustSpread([10, 12])!, 2, accuracy: 0.001, "2 sources: plain range")
+        XCTAssertEqual(robustSpread([10, 11, 12])!, 2, accuracy: 0.001, "3 sources: plain range")
+        // One wild model must not define the disagreement.
+        XCTAssertEqual(robustSpread([10, 11, 12, 13, 14, 100])!, 3, accuracy: 0.001)
+        XCTAssertNil(robustSpread([5]))
+    }
+
+    func testOneOutlierModelDoesNotManufactureAMajorDisagreement() {
+        // Five models agree within 1°; one is wildly off. Trimming keeps it sane.
+        let readings = [
+            reading(.ecmwf, temp: 20), reading(.gfs, temp: 20.5), reading(.icon, temp: 20.2),
+            reading(.metno, temp: 20.4), reading(.gem, temp: 20.1), reading(.ukmo, temp: 34, rain: nil),
+        ]
+        let ring = ComfortData(consensus: ConsensusCalculator().calculate(from: readings)).ring(.temp)!
+        XCTAssertLessThan(ring.spread, 2.0, "trimmed spread ignores the single outlier")
+        XCTAssertFalse(ring.hasFlag)
+    }
+
     func testCircularMeanHandlesWrapAround() {
         // 350° and 10° should average to 0°, not 180°.
         let c = ConsensusCalculator().calculate(from: [
-            reading(.openMeteo, windDir: 350),
-            reading(.openWeather, windDir: 10),
+            reading(.ecmwf, windDir: 350),
+            reading(.gfs, windDir: 10),
         ])
         XCTAssertTrue(c.windDirection == 0 || c.windDirection == 360,
                       "got \(c.windDirection)")

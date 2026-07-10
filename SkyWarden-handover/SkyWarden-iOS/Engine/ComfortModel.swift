@@ -233,7 +233,8 @@ struct ComfortData {
             case .wind:
                 let xs = hourly.map(\.windSpeed); return range(xs)
             case .uv:
-                let xs = readings.flatMap { $0.hourlyForecast.map(\.uvIndex) }; return range(xs)
+                // Only a couple of models publish UV at all.
+                let xs = readings.flatMap { $0.hourlyForecast.compactMap(\.uvIndex) }; return range(xs)
             case .humidity:
                 return nil   // humidity has no per-hour forecast in the model
             }
@@ -248,8 +249,8 @@ struct ComfortData {
                 guard let v = sourceValue(r, m) else { return nil }
                 return (source: r.source, value: v)
             }
-            let nums = per.map(\.value)
-            let spread = (nums.max() ?? 0) - (nums.min() ?? 0)
+            // Trimmed with 4+ sources so extra models don't inflate the spread.
+            let spread = robustSpread(per.map(\.value)) ?? 0
             return RingReading(metric: m, value: value(m), minMax: minMax(m),
                                perSource: per, spread: spread)
         }

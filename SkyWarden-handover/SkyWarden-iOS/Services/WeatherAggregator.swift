@@ -33,7 +33,7 @@ final class WeatherAggregator: ObservableObject {
     private let cacheSeconds: TimeInterval = 600  // 10 minutes
 
     // Display order for readings and failed-source chips
-    private let sourceOrder: [WeatherSource] = [.openMeteo, .openWeather, .weatherKit, .bom]
+    private let sourceOrder: [WeatherSource] = WeatherSource.allCases
 
     // MARK: - Main fetch
     func refresh(location: CLLocation, force: Bool = false) async {
@@ -89,30 +89,31 @@ final class WeatherAggregator: ObservableObject {
         var readings: [WeatherReading] = []
         var failed:   [WeatherSource]  = []
 
-        await withTaskGroup(of: (WeatherSource, Result<WeatherReading, Error>).self) { group in
+        await withTaskGroup(of: ([WeatherSource], Result<[WeatherReading], Error>).self) { group in
+            // One request returns all six numerical models.
             group.addTask { [openMeteo, sourceTimeout] in
-                await Self.tagged(.openMeteo, sourceTimeout) { try await openMeteo.fetch(location: location) }
+                await Self.tagged(WeatherSource.models, sourceTimeout) { try await openMeteo.fetch(location: location) }
             }
             group.addTask { [openWeather, sourceTimeout] in
-                await Self.tagged(.openWeather, sourceTimeout) { try await openWeather.fetch(location: location) }
+                await Self.tagged([.openWeather], sourceTimeout) { [try await openWeather.fetch(location: location)] }
             }
             group.addTask { [weatherKit, sourceTimeout] in
-                await Self.tagged(.weatherKit, sourceTimeout) { try await weatherKit.fetch(location: location) }
+                await Self.tagged([.weatherKit], sourceTimeout) { [try await weatherKit.fetch(location: location)] }
             }
             group.addTask { [bom, sourceTimeout] in
-                await Self.tagged(.bom, sourceTimeout) { try await bom.fetch(location: location) }
+                await Self.tagged([.bom], sourceTimeout) { [try await bom.fetch(location: location)] }
             }
 
-            for await (source, result) in group {
+            for await (sources, result) in group {
                 switch result {
-                case .success(let reading):
-                    readings.append(reading)
+                case .success(let newReadings):
+                    readings.append(contentsOf: newReadings)
                 case .failure(let error):
                     // A source that doesn't cover this location isn't "unavailable" —
                     // don't surface BOM as broken when the user is in Paris.
                     if case ServiceError.notApplicable = error { continue }
-                    failed.append(source)
-                    print("⚠️ \(source.rawValue) fetch failed: \(error.localizedDescription)")
+                    failed.append(contentsOf: sources)
+                    print("⚠️ \(sources.map(\.short).joined(separator: ",")) fetch failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -125,14 +126,15 @@ final class WeatherAggregator: ObservableObject {
 
     private func rank(_ s: WeatherSource) -> Int { sourceOrder.firstIndex(of: s) ?? .max }
 
-    /// Runs a source fetch with a timeout and tags the result with its source.
+    /// Runs a provider fetch with a timeout, tagged with the sources it supplies.
+    /// A provider may yield several sources (Open-Meteo returns six models).
     private static func tagged(
-        _ source: WeatherSource,
+        _ sources: [WeatherSource],
         _ timeout: TimeInterval,
-        _ operation: @escaping () async throws -> WeatherReading
-    ) async -> (WeatherSource, Result<WeatherReading, Error>) {
-        do    { return (source, .success(try await withTimeout(timeout, operation))) }
-        catch { return (source, .failure(error)) }
+        _ operation: @escaping () async throws -> [WeatherReading]
+    ) async -> ([WeatherSource], Result<[WeatherReading], Error>) {
+        do    { return (sources, .success(try await withTimeout(timeout, operation))) }
+        catch { return (sources, .failure(error)) }
     }
 
     // MARK: - Tides fetch

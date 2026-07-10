@@ -1,6 +1,16 @@
-// SkyWarden — Open-Meteo Service
-// Free, no API key. Excellent hourly resolution.
-// Docs: https://open-meteo.com/en/docs
+// Sky Warden — Open-Meteo multi-model service
+// Free, no API key.
+//
+// One request returns the SAME variables from six independent numerical weather
+// models (ECMWF, NOAA GFS, DWD ICON, MET Norway, Environment Canada GEM, UK Met
+// Office). Each becomes its own source, so the disagreement engine compares the
+// world's major forecast models rather than several resellers of one model.
+//
+// Not every model publishes every variable — UKMO has no precipitation
+// probability, and only GFS and MET Norway publish UV. Those come back `nil`.
+//
+// Response keys are suffixed per model (`temperature_2m_ecmwf_ifs025`), which is
+// dynamic, so we read the JSON as a dictionary rather than via Decodable.
 
 import Foundation
 import CoreLocation
@@ -9,22 +19,22 @@ struct OpenMeteoService {
 
     private let baseURL = "https://api.open-meteo.com/v1/forecast"
 
-    // MARK: - Fetch
-    func fetch(location: CLLocation) async throws -> WeatherReading {
-        let lat = location.coordinate.latitude
-        let lon = location.coordinate.longitude
+    /// The model whose hourly/daily detail drives the Today/Week/Scene tabs.
+    static let primary: WeatherSource = .ecmwf
 
+    // MARK: - Fetch
+    func fetch(location: CLLocation) async throws -> [WeatherReading] {
         let items: [URLQueryItem] = [
-            .init(name: "latitude",          value: "\(lat)"),
-            .init(name: "longitude",         value: "\(lon)"),
-            .init(name: "current",           value: currentFields),
-            .init(name: "hourly",            value: hourlyFields),
-            .init(name: "daily",             value: dailyFields),
-            .init(name: "timezone",          value: "auto"),
-            .init(name: "forecast_days",     value: "7"),
-            .init(name: "wind_speed_unit",   value: "kmh"),
-            .init(name: "temperature_unit",  value: "celsius"),
-            .init(name: "precipitation_unit",value: "mm"),
+            .init(name: "latitude",           value: "\(location.coordinate.latitude)"),
+            .init(name: "longitude",          value: "\(location.coordinate.longitude)"),
+            .init(name: "hourly",             value: hourlyFields),
+            .init(name: "daily",              value: dailyFields),
+            .init(name: "models",             value: WeatherSource.models.compactMap(\.openMeteoModel).joined(separator: ",")),
+            .init(name: "timezone",           value: "auto"),
+            .init(name: "forecast_days",      value: "7"),
+            .init(name: "wind_speed_unit",    value: "kmh"),
+            .init(name: "temperature_unit",   value: "celsius"),
+            .init(name: "precipitation_unit", value: "mm"),
         ]
 
         guard let request = WeatherProxy.request(source: "openmeteo", directBase: baseURL, items: items) else {
@@ -35,111 +45,128 @@ struct OpenMeteoService {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ServiceError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }
-
-        let raw = try JSONDecoder().decode(OpenMeteoResponse.self, from: data)
-        return try parse(raw)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ServiceError.decodingError("Open-Meteo root")
+        }
+        return parse(root)
     }
 
     // MARK: - Parse
-    private func parse(_ r: OpenMeteoResponse) throws -> WeatherReading {
-        guard let current = r.current else { throw ServiceError.missingData("current") }
+    private func parse(_ root: [String: Any]) -> [WeatherReading] {
+        let hourly = root["hourly"] as? [String: Any] ?? [:]
+        let daily  = root["daily"]  as? [String: Any] ?? [:]
+        let hourTimes = (hourly["time"] as? [String] ?? []).compactMap(Self.omTime.date(from:))
+        let dayTimes  = (daily["time"] as? [String] ?? []).compactMap(Self.omDay.date(from:))
+        guard !hourTimes.isEmpty else { return [] }
 
-        let wmoCode    = current.weatherCode ?? 0
-        let condition  = condition(from: wmoCode)
-        let windDir    = Int(current.windDirection10m ?? 0)
-        let temp       = current.temperature2m ?? 0
-        let apparent   = current.apparentTemperature ?? temp
-        let humidity   = current.relativeHumidity2m ?? 0
-        let windSpeed  = current.windSpeed10m ?? 0
-        let precipitation = current.precipitation ?? 0
+        // The hour that best represents "now".
+        let now = Date()
+        let nowIdx = hourTimes.lastIndex { $0 <= now } ?? 0
 
-        // Hourly
-        let hourlyReadings = parseHourly(r.hourly)
+        return WeatherSource.models.compactMap { source -> WeatherReading? in
+            guard let model = source.openMeteoModel else { return nil }
 
-        // Daily
-        let dailyReadings = parseDaily(r.daily)
+            let temp    = doubles(hourly, "temperature_2m", model)
+            let feels   = doubles(hourly, "apparent_temperature", model)
+            let hum     = doubles(hourly, "relative_humidity_2m", model)
+            let pop     = doubles(hourly, "precipitation_probability", model)
+            let precip  = doubles(hourly, "precipitation", model)
+            let code    = doubles(hourly, "weather_code", model)
+            let wind    = doubles(hourly, "wind_speed_10m", model)
+            let windDir = doubles(hourly, "wind_direction_10m", model)
+            let gust    = doubles(hourly, "wind_gusts_10m", model)
+            let uv      = doubles(hourly, "uv_index", model)
+            let press   = doubles(hourly, "surface_pressure", model)
 
-        return WeatherReading(
-            source:          .openMeteo,
-            fetchedAt:       Date(),
-            temperature:     temp,
-            feelsLike:       apparent,
-            tempMin:         dailyReadings.first?.tempMin,
-            tempMax:         dailyReadings.first?.tempMax,
-            rainProbability: Double(r.hourly?.precipitationProbability?.first ?? 0),
-            rainAmount:      precipitation,
-            windSpeed:       windSpeed,
-            windGust:        current.windGusts10m,
-            windDirection:   windDir,
-            humidity:        humidity,
-            uvIndex:         r.daily?.uvIndexMax?.first,
-            visibility:      nil,
-            pressure:        current.surfacePressure,
-            condition:       condition,
-            hourlyForecast:  hourlyReadings,
-            dailyForecast:   dailyReadings
-        )
+            // A model that returned no temperature simply isn't available here.
+            guard let current = temp[safe: nowIdx] ?? nil else { return nil }
+
+            let hourlyReadings: [HourlyReading] = (nowIdx..<min(nowIdx + 24, hourTimes.count)).map { i in
+                HourlyReading(
+                    time:            hourTimes[i],
+                    temperature:     temp[safe: i]?.flatMap { $0 } ?? current,
+                    rainProbability: pop[safe: i]?.flatMap { $0 },
+                    rainAmount:      precip[safe: i]?.flatMap { $0 } ?? 0,
+                    windSpeed:       wind[safe: i]?.flatMap { $0 } ?? 0,
+                    condition:       Self.condition(from: Int(code[safe: i]?.flatMap { $0 } ?? 0)),
+                    uvIndex:         uv[safe: i]?.flatMap { $0 }
+                )
+            }
+
+            let dTempMax = doubles(daily, "temperature_2m_max", model)
+            let dTempMin = doubles(daily, "temperature_2m_min", model)
+            let dPop     = doubles(daily, "precipitation_probability_max", model)
+            let dSum     = doubles(daily, "precipitation_sum", model)
+            let dWind    = doubles(daily, "wind_speed_10m_max", model)
+            let dCode    = doubles(daily, "weather_code", model)
+            let dUV      = doubles(daily, "uv_index_max", model)
+            let dSunrise = strings(daily, "sunrise", model)
+            let dSunset  = strings(daily, "sunset", model)
+
+            let dailyReadings: [DailyReading] = dayTimes.indices.map { i in
+                DailyReading(
+                    date:            dayTimes[i],
+                    tempMax:         dTempMax[safe: i]?.flatMap { $0 } ?? current,
+                    tempMin:         dTempMin[safe: i]?.flatMap { $0 } ?? current,
+                    rainProbability: dPop[safe: i]?.flatMap { $0 },
+                    rainAmount:      dSum[safe: i]?.flatMap { $0 } ?? 0,
+                    windSpeed:       dWind[safe: i]?.flatMap { $0 } ?? 0,
+                    condition:       Self.condition(from: Int(dCode[safe: i]?.flatMap { $0 } ?? 0)),
+                    uvIndexMax:      dUV[safe: i]?.flatMap { $0 },
+                    sunrise:         dSunrise[safe: i].flatMap { $0 }.flatMap(Self.omTime.date(from:)),
+                    sunset:          dSunset[safe: i].flatMap { $0 }.flatMap(Self.omTime.date(from:))
+                )
+            }
+
+            return WeatherReading(
+                source:          source,
+                fetchedAt:       Date(),
+                temperature:     current,
+                feelsLike:       feels[safe: nowIdx]?.flatMap { $0 } ?? current,
+                tempMin:         dailyReadings.first?.tempMin,
+                tempMax:         dailyReadings.first?.tempMax,
+                rainProbability: pop[safe: nowIdx]?.flatMap { $0 },
+                rainAmount:      precip[safe: nowIdx]?.flatMap { $0 } ?? 0,
+                windSpeed:       wind[safe: nowIdx]?.flatMap { $0 } ?? 0,
+                windGust:        gust[safe: nowIdx]?.flatMap { $0 },
+                windDirection:   Int(windDir[safe: nowIdx]?.flatMap { $0 } ?? 0),
+                humidity:        hum[safe: nowIdx]?.flatMap { $0 } ?? 0,
+                uvIndex:         uv[safe: nowIdx]?.flatMap { $0 },
+                visibility:      nil,
+                pressure:        press[safe: nowIdx]?.flatMap { $0 },
+                condition:       Self.condition(from: Int(code[safe: nowIdx]?.flatMap { $0 } ?? 0)),
+                hourlyForecast:  hourlyReadings,
+                dailyForecast:   dailyReadings
+            )
+        }
     }
 
-    // Open-Meteo returns naive local times like "2026-07-10T13:00" (no seconds,
-    // no offset) — ISO8601DateFormatter rejects these, so use an explicit format.
-    private static let omTime: DateFormatter = {
+    // MARK: - Dynamic key access
+    /// `nil` entries are genuine JSON nulls — variables the model doesn't publish.
+    private func doubles(_ dict: [String: Any], _ base: String, _ model: String) -> [Double?] {
+        (dict["\(base)_\(model)"] as? [Any])?.map { $0 as? Double } ?? []
+    }
+    private func strings(_ dict: [String: Any], _ base: String, _ model: String) -> [String?] {
+        (dict["\(base)_\(model)"] as? [Any])?.map { $0 as? String } ?? []
+    }
+
+    // Open-Meteo returns naive local times ("2026-07-10T13:00") that
+    // ISO8601DateFormatter rejects, so parse with explicit formats.
+    static let omTime: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd'T'HH:mm"
         return f
     }()
-
-    private func parseHourly(_ h: OpenMeteoHourly?) -> [HourlyReading] {
-        guard let h, let times = h.time else { return [] }
-        let iso = Self.omTime
-
-        return times.prefix(24).enumerated().compactMap { (i, timeStr) in
-            guard let date = iso.date(from: timeStr) else { return nil }
-            return HourlyReading(
-                time:             date,
-                temperature:      h.temperature2m?[safe: i] ?? 0,
-                rainProbability:  Double(h.precipitationProbability?[safe: i] ?? 0),
-                rainAmount:       h.precipitation?[safe: i] ?? 0,
-                windSpeed:        h.windSpeed10m?[safe: i] ?? 0,
-                condition:        condition(from: h.weatherCode?[safe: i] ?? 0),
-                uvIndex:          h.uvIndex?[safe: i] ?? 0
-            )
-        }
-    }
-
-    private func parseDaily(_ d: OpenMeteoDaily?) -> [DailyReading] {
-        guard let d, let times = d.time else { return [] }
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-
-        return times.enumerated().compactMap { (i, timeStr) in
-            guard let date = df.date(from: timeStr) else { return nil }
-
-            var sunrise: Date? = nil
-            var sunset: Date? = nil
-            let iso = Self.omTime
-            if let sr = d.sunrise?[safe: i] { sunrise = iso.date(from: sr) }
-            if let ss = d.sunset?[safe: i]  { sunset  = iso.date(from: ss) }
-
-            return DailyReading(
-                date:             date,
-                tempMax:          d.temperature2mMax?[safe: i] ?? 0,
-                tempMin:          d.temperature2mMin?[safe: i] ?? 0,
-                rainProbability:  Double(d.precipitationProbabilityMax?[safe: i] ?? 0),
-                rainAmount:       d.precipitationSum?[safe: i] ?? 0,
-                windSpeed:        d.windSpeed10mMax?[safe: i] ?? 0,
-                condition:        condition(from: d.weatherCodeMax?[safe: i] ?? 0),
-                uvIndexMax:       d.uvIndexMax?[safe: i] ?? 0,
-                sunrise:          sunrise,
-                sunset:           sunset
-            )
-        }
-    }
+    static let omDay: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     // MARK: - WMO code → WeatherCondition
-    // https://open-meteo.com/en/docs#weathervariables
-    private func condition(from code: Int) -> WeatherCondition {
+    static func condition(from code: Int) -> WeatherCondition {
         switch code {
         case 0:          return .clearSky
         case 1:          return .mostlyClear
@@ -159,14 +186,11 @@ struct OpenMeteoService {
     }
 
     // MARK: - Field lists
-    private var currentFields: String {
-        ["temperature_2m","apparent_temperature","relative_humidity_2m",
-         "precipitation","weather_code","wind_speed_10m","wind_direction_10m",
-         "wind_gusts_10m","surface_pressure"].joined(separator: ",")
-    }
     private var hourlyFields: String {
-        ["temperature_2m","precipitation_probability","precipitation",
-         "weather_code","wind_speed_10m","uv_index"].joined(separator: ",")
+        ["temperature_2m","apparent_temperature","relative_humidity_2m",
+         "precipitation_probability","precipitation","weather_code",
+         "wind_speed_10m","wind_direction_10m","wind_gusts_10m",
+         "uv_index","surface_pressure"].joined(separator: ",")
     }
     private var dailyFields: String {
         ["weather_code","temperature_2m_max","temperature_2m_min",
@@ -193,82 +217,5 @@ enum ServiceError: LocalizedError {
         case .decodingError(let m):return "Decode error: \(m)"
         case .notApplicable(let m):return m
         }
-    }
-}
-
-// MARK: - Decodable response models
-private struct OpenMeteoResponse: Decodable {
-    let current: OpenMeteoCurrent?
-    let hourly:  OpenMeteoHourly?
-    let daily:   OpenMeteoDaily?
-}
-
-private struct OpenMeteoCurrent: Decodable {
-    let temperature2m:        Double?
-    let apparentTemperature:  Double?
-    let relativeHumidity2m:   Double?
-    let precipitation:        Double?
-    let weatherCode:          Int?
-    let windSpeed10m:         Double?
-    let windDirection10m:     Double?
-    let windGusts10m:         Double?
-    let surfacePressure:      Double?
-
-    enum CodingKeys: String, CodingKey {
-        case temperature2m       = "temperature_2m"
-        case apparentTemperature = "apparent_temperature"
-        case relativeHumidity2m  = "relative_humidity_2m"
-        case precipitation       = "precipitation"
-        case weatherCode         = "weather_code"
-        case windSpeed10m        = "wind_speed_10m"
-        case windDirection10m    = "wind_direction_10m"
-        case windGusts10m        = "wind_gusts_10m"
-        case surfacePressure     = "surface_pressure"
-    }
-}
-
-private struct OpenMeteoHourly: Decodable {
-    let time:                      [String]?
-    let temperature2m:             [Double]?
-    let precipitationProbability:  [Int]?
-    let precipitation:             [Double]?
-    let weatherCode:               [Int]?
-    let windSpeed10m:              [Double]?
-    let uvIndex:                   [Double]?
-
-    enum CodingKeys: String, CodingKey {
-        case time                     = "time"
-        case temperature2m            = "temperature_2m"
-        case precipitationProbability = "precipitation_probability"
-        case precipitation            = "precipitation"
-        case weatherCode              = "weather_code"
-        case windSpeed10m             = "wind_speed_10m"
-        case uvIndex                  = "uv_index"
-    }
-}
-
-private struct OpenMeteoDaily: Decodable {
-    let time:                        [String]?
-    let weatherCodeMax:              [Int]?
-    let temperature2mMax:            [Double]?
-    let temperature2mMin:            [Double]?
-    let precipitationSum:            [Double]?
-    let precipitationProbabilityMax: [Int]?
-    let windSpeed10mMax:             [Double]?
-    let uvIndexMax:                  [Double]?
-    let sunrise:                     [String]?
-    let sunset:                      [String]?
-
-    enum CodingKeys: String, CodingKey {
-        case time                        = "time"
-        case weatherCodeMax              = "weather_code"
-        case temperature2mMax            = "temperature_2m_max"
-        case temperature2mMin            = "temperature_2m_min"
-        case precipitationSum            = "precipitation_sum"
-        case precipitationProbabilityMax = "precipitation_probability_max"
-        case windSpeed10mMax             = "wind_speed_10m_max"
-        case uvIndexMax                  = "uv_index_max"
-        case sunrise                     = "sunrise"
-        case sunset                      = "sunset"
     }
 }

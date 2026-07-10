@@ -132,15 +132,19 @@ struct UVView: View {
     private var level: UVLevel { UV_LEVELS.first { uv <= $0.max } ?? UV_LEVELS[0] }
     private var pct: Double { min(1, uv / 14) }
 
-    // Derived from the primary source's hourly UV
-    private var hourlyUV: [HourlyReading] {
-        (consensus.rawReadings.first { $0.source == .openMeteo } ?? consensus.rawReadings.first)?.hourlyForecast ?? []
+    /// Most numerical models publish no UV — use the first source that does.
+    private var hourlyUV: [(uv: Double, time: Date)] {
+        for reading in consensus.rawReadings {
+            let points = reading.hourlyForecast.compactMap { h in h.uvIndex.map { (uv: $0, time: h.time) } }
+            if !points.isEmpty { return points }
+        }
+        return []
     }
     private var peak: (value: Double, time: Date)? {
-        hourlyUV.max { $0.uvIndex < $1.uvIndex }.map { ($0.uvIndex, $0.time) }
+        hourlyUV.max { $0.uv < $1.uv }.map { ($0.uv, $0.time) }
     }
     private var protectionWindow: (Date, Date)? {
-        let over = hourlyUV.filter { $0.uvIndex >= 3 }
+        let over = hourlyUV.filter { $0.uv >= 3 }
         guard let first = over.first?.time, let last = over.last?.time else { return nil }
         return (first, last)
     }
