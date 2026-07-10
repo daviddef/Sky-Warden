@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(UnitKey.wind)         private var windUnit        = WindUnit.kmh.rawValue
     @AppStorage(DisplayKey.dialStyle)   private var dialStyle       = DialStyle.arc.rawValue
     @AppStorage(DisplayKey.arcFillMode) private var arcFillMode     = ArcFillMode.comfort.rawValue
+    @AppStorage(DisplayKey.showRange)   private var showRange       = true
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -41,6 +42,13 @@ struct SettingsView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.top, 2)
                             }
+
+                            Divider().background(Sky.surface).padding(.vertical, 4)
+                            toggle("Show today's range", $showRange)
+                            Text("Marks today's forecast low→high on each ring and in its badge.")
+                                .font(.system(size: 10)).foregroundColor(Sky.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 2)
                         }
 
                         card("SOURCES") {
@@ -111,6 +119,13 @@ struct SettingsView: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 190)
         }
+    }
+
+    private func toggle(_ label: String, _ isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            Text(label).font(.system(size: 14)).foregroundColor(Sky.text)
+        }
+        .tint(Sky.tide)
     }
 }
 

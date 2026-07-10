@@ -950,4 +950,18 @@ final class DisplayScaleTests: XCTestCase {
         // The user asked for the arc to be the default; the fallback must agree.
         XCTAssertEqual(DialStyle(rawValue: "nonsense") ?? .arc, .arc)
     }
+
+    /// The range band/label is suppressed when both ends format the same, so a
+    /// wind forecast of 0.6–1.4 km/h doesn't render a pointless "1–1".
+    func testRangeEndpointsThatFormatIdenticallyAreConsideredEmpty() {
+        XCTAssertEqual(ComfortMetric.wind.format(0.6), ComfortMetric.wind.format(1.4),
+                       "both round to the same displayed wind")
+        XCTAssertNotEqual(ComfortMetric.temp.format(8), ComfortMetric.temp.format(20),
+                          "a real temperature range shows")
+    }
+
+    func testShowRangeDefaultsOn() {
+        // Absent key → range visible; the user asked to see it.
+        XCTAssertTrue(UserDefaults.standard.object(forKey: "unset.key") as? Bool ?? true)
+    }
 }

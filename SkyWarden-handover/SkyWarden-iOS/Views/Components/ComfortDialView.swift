@@ -23,6 +23,7 @@ struct ComfortDialView: View {
     @Binding var selected: ComfortMetric?
 
     @AppStorage(DisplayKey.arcFillMode) private var fillModeRaw = ArcFillMode.comfort.rawValue
+    @AppStorage(DisplayKey.showRange)   private var showRange   = true
     private var fillMode: ArcFillMode { ArcFillMode(rawValue: fillModeRaw) ?? .comfort }
 
     private let W: CGFloat = 340
@@ -67,8 +68,18 @@ struct ComfortDialView: View {
 
     private func angleAt(_ fraction: Double) -> Double { -90 + 180 * max(0, min(1, fraction)) }
 
+    /// Today's low→high, but only when it's worth showing: the setting is on, a
+    /// range exists, and the two ends don't format to the same string (a wind
+    /// forecast of 0.6–1.4 km/h collapses to "1–1", which is just noise).
+    private func shownRange(_ r: RingReading) -> (Double, Double)? {
+        guard showRange, let mm = r.minMax,
+              r.metric.format(mm.0) != r.metric.format(mm.1) else { return nil }
+        return mm
+    }
+
     private struct Badge {
         let metric: ComfortMetric, value: Double
+        let range: (Double, Double)?
         let anchor: CGPoint, color: Color
         let flagged: Bool, major: Bool, selected: Bool
     }
@@ -105,17 +116,23 @@ struct ComfortDialView: View {
         ctx.stroke(arc(-90, 90, rad), with: .color(Sky.surface),
                    style: StrokeStyle(lineWidth: lw, lineCap: .round))
 
-        // Today's forecast range as a faint band.
-        if let mm = r.minMax {
-            let a = angleAt(fraction(metric, value: mm.0))
-            let b = angleAt(fraction(metric, value: mm.1))
-            ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.muted.opacity(0.10)),
-                       style: StrokeStyle(lineWidth: lw + 2, lineCap: .round))
-        }
-
         // The fill: always from the left (good/low) end to the reading.
         ctx.stroke(arc(-90, needleA, rad), with: .color(color),
                    style: StrokeStyle(lineWidth: lw, lineCap: .round))
+
+        // Today's forecast low→high: a bright core over the span it covers, drawn
+        // ON TOP of the fill so it reads whether the span sits inside the filled
+        // part or beyond the needle. The numbers ride in the badge below.
+        if let mm = shownRange(r) {
+            let a = angleAt(fraction(metric, value: mm.0))
+            let b = angleAt(fraction(metric, value: mm.1))
+            ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.white.opacity(0.5)),
+                       style: StrokeStyle(lineWidth: max(2, lw * 0.32), lineCap: .round))
+            for e in [a, b] {
+                ctx.stroke(tick(e, rad, lw + 3), with: .color(Sky.white.opacity(0.7)),
+                           style: StrokeStyle(lineWidth: 1.5))
+            }
+        }
 
         // .both: mark where comfort crosses, so magnitude (length) and comfort
         // (tick) can be read separately.
@@ -147,7 +164,13 @@ struct ComfortDialView: View {
         // apart when several metrics cluster at the same end of the arc.
         let tip = polar(needleA, rad)
         ctx.fill(Path(ellipseIn: rect(tip, 3)), with: .color(color))
-        badges.append(Badge(metric: metric, value: r.value, anchor: tip, color: color,
+        // Range numbers ride in the badge only for temperature: a two-line badge
+        // on all five would stack too tall where the good metrics cluster. Every
+        // ring still shows the range as the band above; tap any ring for its
+        // numbers in the centre.
+        let badgeRange = metric == .temp ? shownRange(r) : nil
+        badges.append(Badge(metric: metric, value: r.value, range: badgeRange,
+                            anchor: tip, color: color,
                             flagged: r.hasFlag, major: r.isMajor, selected: isSelected))
     }
 
@@ -156,21 +179,35 @@ struct ComfortDialView: View {
     /// this pushes overlapping ones apart vertically and draws a thin leader back
     /// to the ring so the link survives the move.
     private func layoutBadges(_ ctx: GraphicsContext, _ badges: [Badge]) {
-        struct Placed { let badge: Badge; var center: CGPoint; let size: CGSize; let text: GraphicsContext.ResolvedText }
+        struct Placed {
+            let badge: Badge; var center: CGPoint; let size: CGSize
+            let value: GraphicsContext.ResolvedText
+            let range: GraphicsContext.ResolvedText?
+        }
 
         // Resolve outermost-ring first (added first): keeps the temperature badge
         // nearest its ring and lets inner ones flow into the open lower centre.
         var placed: [Placed] = []
         for b in badges {
             let size: CGFloat = b.selected ? 12 : 10.5
-            let text = ctx.resolve(Text("\(b.metric.emoji) \(b.metric.format(b.value))")
-                .font(.system(size: size, weight: .semibold)))
-            let m = text.measure(in: CGSize(width: 140, height: 40))
-            let box = CGSize(width: m.width + 12, height: m.height + 6)
+            let value = ctx.resolve(Text("\(b.metric.emoji) \(b.metric.format(b.value))")
+                .font(.system(size: size, weight: .semibold)).foregroundColor(Sky.white))
+            let vm = value.measure(in: CGSize(width: 160, height: 40))
+
+            // Today's low→high on a second, smaller line inside the same capsule.
+            var range: GraphicsContext.ResolvedText?
+            var rm = CGSize.zero
+            if let mm = b.range {
+                let t = ctx.resolve(Text("\(b.metric.format(mm.0))–\(b.metric.format(mm.1))")
+                    .font(.system(size: size - 2, weight: .medium)).foregroundColor(Sky.muted))
+                rm = t.measure(in: CGSize(width: 160, height: 40))
+                range = t
+            }
+            let box = CGSize(width: max(vm.width, rm.width) + 16,
+                             height: vm.height + (range != nil ? rm.height + 1 : 0) + 6)
 
             var c = CGPoint(x: max(box.width / 2 + 1, min(W - box.width / 2 - 1, b.anchor.x)),
                             y: b.anchor.y)
-            // Push down out of any collision, then up if that hits the floor.
             for _ in 0..<24 {
                 guard let hit = placed.first(where: {
                     abs($0.center.x - c.x) < ($0.size.width + box.width) / 2 + 2 &&
@@ -179,22 +216,30 @@ struct ComfortDialView: View {
                 c.y = hit.center.y + (hit.size.height + box.height) / 2 + 2
             }
             c.y = min(c.y, ringH - box.height / 2 - 1)
-            placed.append(Placed(badge: b, center: c, size: box, text: text))
+            placed.append(Placed(badge: b, center: c, size: box, value: value, range: range))
         }
 
         for p in placed {
-            // Leader from the ring dot to a moved capsule.
             if hypot(p.center.x - p.badge.anchor.x, p.center.y - p.badge.anchor.y) > 10 {
                 var line = Path(); line.move(to: p.badge.anchor); line.addLine(to: p.center)
                 ctx.stroke(line, with: .color(Sky.muted.opacity(0.3)), lineWidth: 1)
             }
             let box = CGRect(x: p.center.x - p.size.width / 2, y: p.center.y - p.size.height / 2,
                              width: p.size.width, height: p.size.height)
-            ctx.fill(Path(roundedRect: box, cornerRadius: p.size.height / 2), with: .color(Sky.navy))
-            ctx.stroke(Path(roundedRect: box, cornerRadius: p.size.height / 2),
+            let radius = min(p.size.height / 2, 9)
+            ctx.fill(Path(roundedRect: box, cornerRadius: radius), with: .color(Sky.navy))
+            ctx.stroke(Path(roundedRect: box, cornerRadius: radius),
                        with: .color(p.badge.flagged ? (p.badge.major ? Sky.red : Sky.amber) : p.badge.color),
                        lineWidth: p.badge.selected ? 2 : 1.4)
-            ctx.draw(p.text, at: p.center)
+
+            if let range = p.range {
+                let vh = p.value.measure(in: CGSize(width: 160, height: 40)).height
+                let rh = range.measure(in: CGSize(width: 160, height: 40)).height
+                ctx.draw(p.value, at: CGPoint(x: p.center.x, y: box.minY + 3 + vh / 2))
+                ctx.draw(range, at: CGPoint(x: p.center.x, y: box.maxY - 3 - rh / 2))
+            } else {
+                ctx.draw(p.value, at: p.center)
+            }
         }
     }
 

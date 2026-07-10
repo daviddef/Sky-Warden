@@ -27,6 +27,14 @@ struct RadialDialView: View {
     let confidence: Double
     @Binding var selected: ComfortMetric?
 
+    @AppStorage(DisplayKey.showRange) private var showRange = true
+
+    private func shownRange(_ r: RingReading) -> (Double, Double)? {
+        guard showRange, let mm = r.minMax,
+              r.metric.format(mm.0) != r.metric.format(mm.1) else { return nil }
+        return mm
+    }
+
     private let W: CGFloat = 320
     private let baseR: CGFloat = 140
     // Tip icons ride the rings, so the gap must exceed a tip's diameter —
@@ -82,11 +90,19 @@ struct RadialDialView: View {
         ctx.stroke(circle(rad), with: .color(Sky.surface.opacity(0.55)),
                    style: StrokeStyle(lineWidth: lw))
 
-        // Today's forecast range, as a faint band behind the reading.
-        if let mm = r.minMax {
+        // Today's forecast low→high: a faint band for the span, plus a bright
+        // core and end ticks so it reads clearly. The numbers appear in the
+        // centre when the ring is tapped.
+        if let mm = shownRange(r) {
             let a = angle(metric.score(mm.0)), b = angle(metric.score(mm.1))
             ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.muted.opacity(0.13)),
                        style: StrokeStyle(lineWidth: lw + 4, lineCap: .round))
+            ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.white.opacity(0.45)),
+                       style: StrokeStyle(lineWidth: max(2, lw * 0.32), lineCap: .round))
+            for e in [a, b] {
+                ctx.stroke(tick(e, rad, lw + 3), with: .color(Sky.white.opacity(0.6)),
+                           style: StrokeStyle(lineWidth: 1.5))
+            }
         }
 
         // Where each source sits — neutral ticks, so a wide scatter reads as

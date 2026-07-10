@@ -62,6 +62,7 @@ enum ArcFillMode: String, CaseIterable, Identifiable {
 enum DisplayKey {
     static let dialStyle   = "display.dialStyle"
     static let arcFillMode = "display.arcFillMode"
+    static let showRange   = "display.showRange"
 }
 
 enum Display {
@@ -70,5 +71,9 @@ enum Display {
     }
     static var arcFillMode: ArcFillMode {
         ArcFillMode(rawValue: UserDefaults.standard.string(forKey: DisplayKey.arcFillMode) ?? "") ?? .comfort
+    }
+    /// Show today's forecast low→high as a labelled band on each ring.
+    static var showRange: Bool {
+        UserDefaults.standard.object(forKey: DisplayKey.showRange) as? Bool ?? true
     }
 }
