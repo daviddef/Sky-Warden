@@ -6,7 +6,8 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage(UnitKey.temperature)  private var temperatureUnit = TemperatureUnit.celsius.rawValue
     @AppStorage(UnitKey.wind)         private var windUnit        = WindUnit.kmh.rawValue
-    @AppStorage(DisplayKey.dialStyle) private var dialStyle       = DialStyle.radial.rawValue
+    @AppStorage(DisplayKey.dialStyle)   private var dialStyle       = DialStyle.arc.rawValue
+    @AppStorage(DisplayKey.arcFillMode) private var arcFillMode     = ArcFillMode.comfort.rawValue
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -30,6 +31,16 @@ struct SettingsView: View {
                                 .font(.system(size: 10)).foregroundColor(Sky.muted)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, 2)
+
+                            if dialStyle == DialStyle.arc.rawValue {
+                                Divider().background(Sky.surface).padding(.vertical, 4)
+                                picker("Arc fill", selection: $arcFillMode,
+                                       options: ArcFillMode.allCases.map { ($0.rawValue, $0.title) })
+                                Text(ArcFillMode(rawValue: arcFillMode)?.blurb ?? "")
+                                    .font(.system(size: 10)).foregroundColor(Sky.muted)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 2)
+                            }
                         }
 
                         card("SOURCES") {

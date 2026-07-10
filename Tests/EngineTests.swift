@@ -917,3 +917,37 @@ final class SkillEngagementTests: XCTestCase {
         XCTAssertEqual(result, expected, accuracy: 0.001)
     }
 }
+
+// MARK: - Arc dial value scale
+final class DisplayScaleTests: XCTestCase {
+
+    func testNormalizedClampsToUnitInterval() {
+        XCTAssertEqual(ComfortMetric.uv.normalized(0), 0, accuracy: 0.001)
+        XCTAssertEqual(ComfortMetric.uv.normalized(12), 1, accuracy: 0.001)
+        XCTAssertEqual(ComfortMetric.uv.normalized(6), 0.5, accuracy: 0.001)
+        XCTAssertEqual(ComfortMetric.uv.normalized(20), 1, accuracy: 0.001, "above range clamps, never wraps")
+        XCTAssertEqual(ComfortMetric.temp.normalized(-10), 0, accuracy: 0.001, "below range clamps")
+    }
+
+    /// The whole reason "start at 0" was raised: UV 0 must be an empty arc in
+    /// value mode, not the long sweep the comfort mapping drew.
+    func testValueModeShowsZeroAsEmpty() {
+        XCTAssertEqual(ComfortMetric.uv.normalized(0), 0, accuracy: 0.001)
+        XCTAssertEqual(ComfortMetric.rain.normalized(0), 0, accuracy: 0.001)
+    }
+
+    func testEveryMetricHasAPositiveDisplayRange() {
+        for m in ComfortMetric.allCases {
+            XCTAssertGreaterThan(m.displayRange.upperBound, m.displayRange.lowerBound, "\(m.label)")
+        }
+    }
+
+    func testArcFillModeHasAllThreeToggles() {
+        XCTAssertEqual(Set(ArcFillMode.allCases.map(\.rawValue)), ["comfort", "value", "both"])
+    }
+
+    func testDialDefaultsToArc() {
+        // The user asked for the arc to be the default; the fallback must agree.
+        XCTAssertEqual(DialStyle(rawValue: "nonsense") ?? .arc, .arc)
+    }
+}

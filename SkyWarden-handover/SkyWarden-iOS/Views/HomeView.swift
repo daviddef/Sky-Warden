@@ -1,5 +1,5 @@
 // Sky Warden — Now tab
-// Rating banner · comfort dial · confidence widget · pills · on-this-day · hourly.
+// Rating banner · comfort dial · sources widget · pills · at-a-glance · hourly.
 // Nothing else lives here (moon/tides/etc. have their own tabs) per the handover.
 
 import SwiftUI
@@ -17,9 +17,9 @@ struct HomeView: View {
 
     @State private var selectedMetric: ComfortMetric?
     @State private var onThisDay: OnThisDay?
-    @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.radial.rawValue
+    @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
 
-    private var dialStyle: DialStyle { DialStyle(rawValue: dialStyleRaw) ?? .radial }
+    private var dialStyle: DialStyle { DialStyle(rawValue: dialStyleRaw) ?? .arc }
 
     private var comfort: ComfortData { ComfortData(consensus: consensus) }
 
@@ -46,13 +46,15 @@ struct HomeView: View {
                         RadialDialView(data: comfort, temperature: consensus.temperature,
                                        confidence: confidence, selected: $selectedMetric)
                     case .arc:
-                        ComfortDialView(data: comfort, selected: $selectedMetric)
+                        ComfortDialView(data: comfort, confidence: confidence, selected: $selectedMetric)
                     }
                 }
                 .padding(.top, 8)
 
-                // Sits with the rings it describes, not further down the page.
-                confidenceWidget.padding(.horizontal, 16).padding(.top, 2)
+                // Both dials now show confidence themselves (radial rim / arc
+                // dots), so this strip carries only what they don't: which
+                // sources fed the consensus, and how many disagree.
+                sourcesWidget.padding(.horizontal, 16).padding(.top, 2)
 
                 pills.padding(.horizontal, 16).padding(.top, 10)
 
@@ -145,30 +147,26 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Confidence widget
+    // MARK: - Sources widget
     //
-    // Replaces both the old full-width strip and the "OW, WK unavailable"
-    // banner: a missing source is only interesting as a dent in confidence and
-    // a source count, not as its own paragraph.
-    private var confidenceWidget: some View {
-        let color = confidence >= 0.8 ? Comfort.good : confidence >= 0.5 ? Sky.amber : Comfort.poor
+    // Confidence itself now lives on the dial (radial rim / arc dots). This strip
+    // carries only what the dial doesn't: how many sources reported, and how many
+    // disagree. It also absorbed the old "OW, WK unavailable" banner — a missing
+    // source is a smaller source count, not its own paragraph.
+    private var sourcesWidget: some View {
         let used = consensus.sources.count
         let total = used + failedSources.count
         return HStack(spacing: 8) {
-            ZStack {
-                Circle().stroke(Sky.card, lineWidth: 3).frame(width: 18, height: 18)
-                Circle().trim(from: 0, to: confidence)
-                    .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: 18, height: 18)
-            }
-            Text("\(Int((confidence * 100).rounded()))% confidence")
-                .font(.system(size: 11, weight: .semibold)).foregroundColor(color)
-
-            Text("·").foregroundColor(Sky.muted).font(.system(size: 11))
-            Text("\(used)/\(total) sources")
+            Image(systemName: "antenna.radiowaves.left.and.right")
                 .font(.system(size: 11)).foregroundColor(Sky.muted)
+            Text("\(used)/\(total) sources")
+                .font(.system(size: 11, weight: .semibold)).foregroundColor(Sky.text)
 
+            if !failedSources.isEmpty {
+                Text("·").foregroundColor(Sky.muted).font(.system(size: 11))
+                Text("\(failedSources.map(\.short).joined(separator: ", ")) down")
+                    .font(.system(size: 11)).foregroundColor(Sky.muted)
+            }
             if flagCount > 0 {
                 Text("·").foregroundColor(Sky.muted).font(.system(size: 11))
                 Text("\(flagCount) vary").font(.system(size: 11)).foregroundColor(Sky.amber)

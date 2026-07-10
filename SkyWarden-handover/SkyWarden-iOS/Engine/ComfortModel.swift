@@ -43,6 +43,25 @@ enum ComfortMetric: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The metric's own display scale, for the arc dial's "value" fill mode.
+    /// Chosen to span the everyday range so the fill uses most of the arc: a
+    /// 40 °C day is a near-full temp ring, a 40 km/h wind a near-full wind ring.
+    var displayRange: ClosedRange<Double> {
+        switch self {
+        case .temp:     0...45
+        case .rain:     0...100
+        case .wind:     0...60
+        case .uv:       0...12
+        case .humidity: 0...100
+        }
+    }
+
+    /// Where `value` sits on `displayRange`, clamped to 0…1.
+    func normalized(_ value: Double) -> Double {
+        let r = displayRange
+        return max(0, min(1, (value - r.lowerBound) / (r.upperBound - r.lowerBound)))
+    }
+
     // MARK: - Scoring curves (ported verbatim from the JSX prototype)
     func score(_ v: Double) -> Double {
         switch self {

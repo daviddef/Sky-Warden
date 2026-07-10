@@ -1,24 +1,34 @@
-// SkyWarden — Comfort Dial
-// Five concentric semicircular arcs (top half only) mapping each measurement to
-// a left(good)…right(uncomfortable) comfort scale. Ported from the prototype's
-// Dial/RingLayer. Drawn with Canvas (immediate mode) per the handover's note.
+// Sky Warden — Comfort Dial (arc)
 //
-// CRITICAL LAYOUT: the ring box and the centre readout are two SEPARATE stacked
-// blocks in normal flow — NOT an overlay with hand-tuned offsets — so the readout
-// can never overlap the rings or the content below it.
+// Five concentric top-half arcs. Position and colour always carry comfort; what
+// the *filled length* means is a user setting (ArcFillMode):
+//
+//   .comfort  fill runs from the good (left) end to the needle — a comfortable
+//             metric is a short arc, an uncomfortable one nearly full. Nothing
+//             emanates from the top any more, which is what "start at 0" meant.
+//   .value    fill is the raw reading on the metric's own 0→max scale. UV 0 is
+//             empty, UV 11 nearly full.
+//   .both     value fill, plus tick(s) where the comfort line crosses.
+//
+// Each needle tip carries a capsule with the metric's icon AND its value, so the
+// numbers live on the dial. The verdict and a row of confidence dots sit in the
+// open lower centre; the wordy readout that didn't fit is gone.
 
 import SwiftUI
 
 struct ComfortDialView: View {
     let data: ComfortData
+    var confidence: Double = 1
     @Binding var selected: ComfortMetric?
 
-    // Geometry (from the prototype)
+    @AppStorage(DisplayKey.arcFillMode) private var fillModeRaw = ArcFillMode.comfort.rawValue
+    private var fillMode: ArcFillMode { ArcFillMode(rawValue: fillModeRaw) ?? .comfort }
+
     private let W: CGFloat = 340
-    private let ringH: CGFloat = 202   // room under the centre line for the good/poor labels
-    private let readoutH: CGFloat = 80
+    private let ringH: CGFloat = 206
+    private let readoutH: CGFloat = 84
     private let cx: CGFloat = 170
-    private let cy: CGFloat = 176
+    private let cy: CGFloat = 178
     private let baseR: CGFloat = 150
     private let gap: CGFloat = 23
 
@@ -30,160 +40,240 @@ struct ComfortDialView: View {
             ringBox
             readout
                 .frame(width: W, height: readoutH, alignment: .top)
-                .padding(.top, -70)   // pull the readout up into the dial's open lower centre
+                .padding(.top, -74)
         }
         .frame(width: W)
+    }
+
+    // MARK: - Fraction along the arc (0 = good/left, 1 = poor/right)
+
+    /// Comfort score +1 (good) → 0, −1 (poor) → 1.
+    private func comfortFraction(_ score: Double) -> Double { (1 - max(-1, min(1, score))) / 2 }
+
+    /// Where a raw value sits on the arc, per the current fill mode. In value
+    /// modes the arc is the metric's own scale; in comfort mode it's the score.
+    private func fraction(_ metric: ComfortMetric, value: Double) -> Double {
+        switch fillMode {
+        case .comfort:     comfortFraction(metric.score(value))
+        case .value, .both: metric.normalized(value)
+        }
+    }
+
+    /// The reading's own fraction — what the fill runs to and the needle marks.
+    private func readingFraction(_ r: RingReading) -> Double {
+        fraction(r.metric, value: r.value)
+    }
+
+    private func angleAt(_ fraction: Double) -> Double { -90 + 180 * max(0, min(1, fraction)) }
+
+    private struct Badge {
+        let metric: ComfortMetric, value: Double
+        let anchor: CGPoint, color: Color
+        let flagged: Bool, major: Bool, selected: Bool
     }
 
     // MARK: - Rings
     private var ringBox: some View {
         Canvas { ctx, _ in
+            var badges: [Badge] = []
             for (i, metric) in ComfortMetric.allCases.enumerated() {
                 guard let r = data.ring(metric) else { continue }
-                drawRing(ctx, reading: r, radius: radius(i),
-                         isSelected: selected == metric)
+                drawRing(ctx, reading: r, radius: radius(i), isSelected: selected == metric, badges: &badges)
             }
-            drawGuides(ctx)
+            layoutBadges(ctx, badges)
+            drawEndLabels(ctx)
         }
         .frame(width: W, height: ringH)
         .contentShape(Rectangle())
-        .gesture(
-            SpatialTapGesture().onEnded { value in
-                if let hit = ringHit(at: value.location) {
-                    withAnimation(.spring(response: 0.3)) {
-                        selected = (selected == hit) ? nil : hit
-                    }
-                }
+        .gesture(SpatialTapGesture().onEnded { value in
+            if let hit = ringHit(at: value.location) {
+                withAnimation(.spring(response: 0.3)) { selected = (selected == hit) ? nil : hit }
             }
-        )
+        })
     }
 
     private func drawRing(_ ctx: GraphicsContext, reading r: RingReading,
-                          radius rad: CGFloat, isSelected: Bool) {
+                          radius rad: CGFloat, isSelected: Bool, badges: inout [Badge]) {
         let metric = r.metric
-        let score = r.score
-        let angle = Comfort.angle(score)
-        let color = Comfort.comfortColor(score)   // same ramp as the radial dial
+        let color = Comfort.comfortColor(r.score)
         let lw: CGFloat = isSelected ? 12 : 9
+        let needleF = readingFraction(r)
+        let needleA = angleAt(needleF)
 
-        // Track + faint "good" half
+        // Track.
         ctx.stroke(arc(-90, 90, rad), with: .color(Sky.surface),
                    style: StrokeStyle(lineWidth: lw, lineCap: .round))
-        ctx.stroke(arc(-90, 0, rad), with: .color(Comfort.good.opacity(0.06)),
+
+        // Today's forecast range as a faint band.
+        if let mm = r.minMax {
+            let a = angleAt(fraction(metric, value: mm.0))
+            let b = angleAt(fraction(metric, value: mm.1))
+            ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.muted.opacity(0.10)),
+                       style: StrokeStyle(lineWidth: lw + 2, lineCap: .round))
+        }
+
+        // The fill: always from the left (good/low) end to the reading.
+        ctx.stroke(arc(-90, needleA, rad), with: .color(color),
                    style: StrokeStyle(lineWidth: lw, lineCap: .round))
 
-        // Today's forecast min/max: faint band + two ticks
-        if let mm = r.minMax {
-            let minA = Comfort.angle(metric.score(mm.0))
-            let maxA = Comfort.angle(metric.score(mm.1))
-            ctx.stroke(arc(min(minA, maxA), max(minA, maxA), rad),
-                       with: .color(Sky.muted.opacity(0.09)),
-                       style: StrokeStyle(lineWidth: lw + 2, lineCap: .round))
-            for a in [minA, maxA] {
-                ctx.stroke(tick(a, rad, lw), with: .color(Sky.muted.opacity(0.55)),
-                           style: StrokeStyle(lineWidth: 1.5))
+        // .both: mark where comfort crosses, so magnitude (length) and comfort
+        // (tick) can be read separately.
+        if fillMode == .both {
+            for t in comfortThresholds(metric) {
+                ctx.stroke(tick(angleAt(metric.normalized(t)), rad, lw + 3),
+                           with: .color(Sky.white.opacity(0.5)), style: StrokeStyle(lineWidth: 1.5))
             }
         }
 
-        // Disagreement bracket (dashed) between furthest-apart source readings
+        // Where each source sits — neutral ticks; a wide scatter reads as spread.
+        for s in r.perSource {
+            ctx.stroke(tick(angleAt(fraction(metric, value: s.value)), rad, lw),
+                       with: .color(Sky.muted.opacity(0.5)), style: StrokeStyle(lineWidth: 1))
+        }
+
+        // Disagreement span (dashed) across the sources' full width.
         if r.hasFlag {
-            let scores = r.perSource.map { metric.score($0.value) }
-            if let hi = scores.max(), let lo = scores.min() {
-                let d = arc(Comfort.angle(hi), Comfort.angle(lo), rad)
-                ctx.stroke(d, with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.55)),
+            let fracs = r.perSource.map { fraction(metric, value: $0.value) }
+            if let lo = fracs.min(), let hi = fracs.max() {
+                ctx.stroke(arc(angleAt(lo), angleAt(hi), rad),
+                           with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.6)),
                            style: StrokeStyle(lineWidth: 2, dash: [2, 2]))
             }
         }
 
-        // Filled needle sweep from centre (12 o'clock) to the score angle
-        if abs(angle) > 1 {
-            ctx.stroke(arc(0, angle, rad), with: .color(color),
-                       style: StrokeStyle(lineWidth: lw, lineCap: .round))
+        // The needle position is marked with a small dot; its icon+value capsule
+        // is laid out afterwards, once all five are known, so they can be nudged
+        // apart when several metrics cluster at the same end of the arc.
+        let tip = polar(needleA, rad)
+        ctx.fill(Path(ellipseIn: rect(tip, 3)), with: .color(color))
+        badges.append(Badge(metric: metric, value: r.value, anchor: tip, color: color,
+                            flagged: r.hasFlag, major: r.isMajor, selected: isSelected))
+    }
+
+    /// Lays out the icon+value capsules and draws them. Several comfortable
+    /// metrics land at the same left-end point, so their capsules would stack;
+    /// this pushes overlapping ones apart vertically and draws a thin leader back
+    /// to the ring so the link survives the move.
+    private func layoutBadges(_ ctx: GraphicsContext, _ badges: [Badge]) {
+        struct Placed { let badge: Badge; var center: CGPoint; let size: CGSize; let text: GraphicsContext.ResolvedText }
+
+        // Resolve outermost-ring first (added first): keeps the temperature badge
+        // nearest its ring and lets inner ones flow into the open lower centre.
+        var placed: [Placed] = []
+        for b in badges {
+            let size: CGFloat = b.selected ? 12 : 10.5
+            let text = ctx.resolve(Text("\(b.metric.emoji) \(b.metric.format(b.value))")
+                .font(.system(size: size, weight: .semibold)))
+            let m = text.measure(in: CGSize(width: 140, height: 40))
+            let box = CGSize(width: m.width + 12, height: m.height + 6)
+
+            var c = CGPoint(x: max(box.width / 2 + 1, min(W - box.width / 2 - 1, b.anchor.x)),
+                            y: b.anchor.y)
+            // Push down out of any collision, then up if that hits the floor.
+            for _ in 0..<24 {
+                guard let hit = placed.first(where: {
+                    abs($0.center.x - c.x) < ($0.size.width + box.width) / 2 + 2 &&
+                    abs($0.center.y - c.y) < ($0.size.height + box.height) / 2 + 2
+                }) else { break }
+                c.y = hit.center.y + (hit.size.height + box.height) / 2 + 2
+            }
+            c.y = min(c.y, ringH - box.height / 2 - 1)
+            placed.append(Placed(badge: b, center: c, size: box, text: text))
         }
 
-        // Per-source ticks. Neutral, not nine hues: here only the spread matters,
-        // and nine source colours failed colour-blind separation anyway.
-        for s in r.perSource {
-            ctx.stroke(tick(Comfort.angle(metric.score(s.value)), rad, lw),
-                       with: .color(Sky.muted.opacity(0.5)), style: StrokeStyle(lineWidth: 1))
-        }
-
-        // The needle tip IS the metric's icon. The badges used to sit at 12
-        // o'clock on every ring, which stacked all five into a vertical totem
-        // pole; on the needle they spread across the arc at five distinct angles.
-        let tip = polar(angle, rad)
-        let tipR: CGFloat = isSelected ? 11 : 9
-        ctx.fill(dot(tip, tipR), with: .color(Sky.navy))
-        ctx.stroke(Path(ellipseIn: rect(tip, tipR)), with: .color(color),
-                   lineWidth: isSelected ? 2.5 : 1.8)
-        ctx.draw(Text(metric.emoji).font(.system(size: isSelected ? 13 : 11)), at: tip)
-
-        if r.hasFlag {
-            ctx.stroke(Path(ellipseIn: rect(tip, tipR + 3)),
-                       with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.7)), lineWidth: 1.5)
+        for p in placed {
+            // Leader from the ring dot to a moved capsule.
+            if hypot(p.center.x - p.badge.anchor.x, p.center.y - p.badge.anchor.y) > 10 {
+                var line = Path(); line.move(to: p.badge.anchor); line.addLine(to: p.center)
+                ctx.stroke(line, with: .color(Sky.muted.opacity(0.3)), lineWidth: 1)
+            }
+            let box = CGRect(x: p.center.x - p.size.width / 2, y: p.center.y - p.size.height / 2,
+                             width: p.size.width, height: p.size.height)
+            ctx.fill(Path(roundedRect: box, cornerRadius: p.size.height / 2), with: .color(Sky.navy))
+            ctx.stroke(Path(roundedRect: box, cornerRadius: p.size.height / 2),
+                       with: .color(p.badge.flagged ? (p.badge.major ? Sky.red : Sky.amber) : p.badge.color),
+                       lineWidth: p.badge.selected ? 2 : 1.4)
+            ctx.draw(p.text, at: p.center)
         }
     }
 
-    private func drawGuides(_ ctx: GraphicsContext) {
-        var line = Path()
-        line.move(to: CGPoint(x: cx, y: cy - baseR - 14))
-        line.addLine(to: CGPoint(x: cx, y: cy + 8))
-        ctx.stroke(line, with: .color(Sky.white.opacity(0.2)),
-                   style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
-
-        // Anchored to the canvas edges, not outward from the rings — the latter
-        // pushed both labels off the sides and truncated their arrows.
-        // Below the tips, not level with them: a full-score needle parks its icon
-        // exactly on the horizontal, right where these labels used to sit.
-        ctx.draw(Text("◀ good").font(.system(size: 8.5)).foregroundColor(Comfort.good.opacity(0.6)),
-                 at: CGPoint(x: 2, y: cy + 13), anchor: .leading)
-        ctx.draw(Text("poor ▶").font(.system(size: 8.5)).foregroundColor(Comfort.poor.opacity(0.6)),
-                 at: CGPoint(x: W - 2, y: cy + 13), anchor: .trailing)
+    /// Values in a metric's display range where its comfort score crosses zero.
+    private func comfortThresholds(_ metric: ComfortMetric) -> [Double] {
+        let r = metric.displayRange
+        let steps = 180
+        var out: [Double] = []
+        var prev = metric.score(r.lowerBound)
+        for i in 1...steps {
+            let v = r.lowerBound + (r.upperBound - r.lowerBound) * Double(i) / Double(steps)
+            let s = metric.score(v)
+            if (prev < 0) != (s < 0) { out.append(v) }
+            prev = s
+        }
+        return out
     }
 
-    // MARK: - Centre readout (separate flow block)
+    private func drawEndLabels(_ ctx: GraphicsContext) {
+        let (lo, hi) = fillMode == .comfort ? ("◀ good", "poor ▶") : ("◀ low", "high ▶")
+        ctx.draw(Text(lo).font(.system(size: 8.5)).foregroundColor(Comfort.good.opacity(0.6)),
+                 at: CGPoint(x: 2, y: cy + 15), anchor: .leading)
+        ctx.draw(Text(hi).font(.system(size: 8.5)).foregroundColor(Comfort.poor.opacity(0.6)),
+                 at: CGPoint(x: W - 2, y: cy + 15), anchor: .trailing)
+    }
+
+    // MARK: - Centre readout: verdict + confidence dots
     @ViewBuilder
     private var readout: some View {
         if let metric = selected, let r = data.ring(metric) {
             let color = Comfort.comfortColor(r.score)
             VStack(spacing: 1) {
-                Text(metric.emoji).font(.system(size: 24))
+                Text(metric.label.uppercased()).font(.system(size: 8)).foregroundColor(Sky.muted).kerning(0.6)
                 Text(metric.format(r.value))
-                    .font(.system(size: 36, weight: .ultraLight, design: .rounded))
-                    .foregroundColor(color)
-                Text(metric.comfortLabel(r.value))
-                    .font(.system(size: 12, weight: .semibold)).foregroundColor(color)
+                    .font(.system(size: 30, weight: .ultraLight, design: .rounded)).foregroundColor(color)
+                Text(metric.comfortLabel(r.value)).font(.system(size: 11, weight: .semibold)).foregroundColor(color)
                 if let mm = r.minMax {
                     Text("\(metric.format(mm.0))–\(metric.format(mm.1))")
-                        .font(.system(size: 10)).foregroundColor(Sky.muted)
+                        .font(.system(size: 9)).foregroundColor(Sky.muted)
                 }
             }
         } else {
             let s = Comfort.overallScore(data)
-            VStack(spacing: 2) {
-                Text("COMFORT")
-                    .font(.system(size: 10)).foregroundColor(Sky.muted)
-                    .kerning(0.7)
+            VStack(spacing: 5) {
                 Text(Comfort.overallLabel(s))
-                    .font(.system(size: 40, weight: .ultraLight, design: .rounded))
+                    .font(.system(size: 30, weight: .ultraLight, design: .rounded))
                     .foregroundColor(Comfort.overallColor(s))
+                confidenceDots
             }
         }
     }
 
-    // MARK: - Geometry helpers
+    /// Confidence as a row of dots — the arc dial's echo of the radial rim. The
+    /// number and bar that lived in a separate widget move here.
+    private var confidenceDots: some View {
+        let filled = Int((confidence * 10).rounded())
+        let color = confidence >= 0.8 ? Comfort.good : confidence >= 0.5 ? Sky.amber : Comfort.poor
+        return VStack(spacing: 3) {
+            HStack(spacing: 4) {
+                ForEach(0..<10, id: \.self) { i in
+                    Circle().fill(i < filled ? color : Sky.surface).frame(width: 5, height: 5)
+                }
+            }
+            Text("\(Int((confidence * 100).rounded()))% confidence")
+                .font(.system(size: 8)).foregroundColor(Sky.muted)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(Int((confidence * 100).rounded())) percent confidence")
+    }
+
+    // MARK: - Geometry
     private func polar(_ deg: Double, _ r: CGFloat) -> CGPoint {
         let rad = (deg - 90) * .pi / 180
-        return CGPoint(x: center.x + r * CGFloat(cos(rad)),
-                       y: center.y + r * CGFloat(sin(rad)))
+        return CGPoint(x: center.x + r * CGFloat(cos(rad)), y: center.y + r * CGFloat(sin(rad)))
     }
-    /// Sampled arc between two dial angles (avoids addArc winding pitfalls).
     private func arc(_ a1: Double, _ a2: Double, _ r: CGFloat) -> Path {
         var p = Path()
         let steps = max(2, Int(abs(a2 - a1) / 1.5))
         for i in 0...steps {
-            let a = a1 + (a2 - a1) * Double(i) / Double(steps)
-            let pt = polar(a, r)
+            let pt = polar(a1 + (a2 - a1) * Double(i) / Double(steps), r)
             i == 0 ? p.move(to: pt) : p.addLine(to: pt)
         }
         return p
@@ -197,9 +287,8 @@ struct ComfortDialView: View {
     private func rect(_ c: CGPoint, _ r: CGFloat) -> CGRect {
         CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
     }
-    private func dot(_ c: CGPoint, _ r: CGFloat) -> Path { Path(ellipseIn: rect(c, r)) }
 
-    /// Nearest ring to a tap in the upper half of the dial.
+    /// Nearest ring to a tap in the upper half.
     private func ringHit(at p: CGPoint) -> ComfortMetric? {
         guard p.y <= cy + 12 else { return nil }
         let dist = hypot(p.x - cx, p.y - cy)
