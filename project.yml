@@ -32,8 +32,12 @@ targets:
       # watchOS-only) and the Config templates are excluded from the iOS app.
       - path: SkyWarden-handover/SkyWarden-iOS
         excludes:
-          - "WatchApp/**"
-          - "Config/**"
+          - "WatchApp/**"    # ClockKit is watchOS-only
+          - "Config/**"      # templates and notes, not code
+          # Unused REST reference. It imports CryptoKit (P256 JWT signing); keeping
+          # it out of the binary means the app ships no cryptography beyond HTTPS,
+          # which keeps the export-compliance answer unambiguous.
+          - "Reference/**"
       - path: Support/iOS/Assets.xcassets
     settings:
       base:

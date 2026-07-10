@@ -38,6 +38,13 @@
     <key>UIUserInterfaceStyle</key>
     <string>Dark</string>
 
+    <!-- ── Export compliance ───────────────────────────────────────── -->
+    <!-- The app ships no cryptography of its own: all traffic is HTTPS/TLS via
+         URLSession, i.e. encryption provided by the operating system. Declaring
+         this here means App Store Connect stops asking on every upload. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+
     <!-- ── Permissions ─────────────────────────────────────────────── -->
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Sky Warden uses your location to fetch and reconcile weather from multiple local sources.</string>
