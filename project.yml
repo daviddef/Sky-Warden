@@ -18,7 +18,8 @@ settings:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: ""
+    # Baked in so regenerating the project never wipes your signing team.
+    DEVELOPMENT_TEAM: L9SAXP2E2W
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
 
