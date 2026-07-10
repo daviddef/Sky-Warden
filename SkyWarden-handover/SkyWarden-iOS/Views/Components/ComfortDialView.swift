@@ -80,7 +80,10 @@ struct ComfortDialView: View {
     private struct Badge {
         let metric: ComfortMetric, value: Double
         let range: (Double, Double)?
-        let anchor: CGPoint, color: Color
+        let anchor: CGPoint          // the reading dot on the ring
+        let radius: CGFloat          // this ring's radius
+        let frac: Double             // reading fraction 0…1 along the arc
+        let color: Color
         let flagged: Bool, major: Bool, selected: Bool
     }
 
@@ -170,31 +173,28 @@ struct ComfortDialView: View {
         // numbers in the centre.
         let badgeRange = metric == .temp ? shownRange(r) : nil
         badges.append(Badge(metric: metric, value: r.value, range: badgeRange,
-                            anchor: tip, color: color,
+                            anchor: tip, radius: rad, frac: needleF, color: color,
                             flagged: r.hasFlag, major: r.isMajor, selected: isSelected))
     }
 
-    /// Lays out the icon+value capsules and draws them. Several comfortable
-    /// metrics land at the same left-end point, so their capsules would stack;
-    /// this pushes overlapping ones apart vertically and draws a thin leader back
-    /// to the ring so the link survives the move.
+    /// Lays out the icon+value capsules and draws them.
+    ///
+    /// The badges do NOT sit at the reading — the ring fill and the needle dot
+    /// already show that. Anchoring them to the reading crowded every good metric
+    /// at the left "starting point". Instead they're spread evenly across the arc,
+    /// each on its own ring's radius, ordered so a left-to-right read still
+    /// matches the readings, with a thin leader from each capsule back to its dot.
     private func layoutBadges(_ ctx: GraphicsContext, _ badges: [Badge]) {
-        struct Placed {
-            let badge: Badge; var center: CGPoint; let size: CGSize
-            let value: GraphicsContext.ResolvedText
-            let range: GraphicsContext.ResolvedText?
-        }
+        guard !badges.isEmpty else { return }
+        let ordered = badges.sorted { $0.frac < $1.frac }
+        let n = ordered.count
 
-        // Resolve outermost-ring first (added first): keeps the temperature badge
-        // nearest its ring and lets inner ones flow into the open lower centre.
-        var placed: [Placed] = []
-        for b in badges {
+        for (k, b) in ordered.enumerated() {
             let size: CGFloat = b.selected ? 12 : 10.5
             let value = ctx.resolve(Text("\(b.metric.emoji) \(b.metric.format(b.value))")
                 .font(.system(size: size, weight: .semibold)).foregroundColor(Sky.white))
             let vm = value.measure(in: CGSize(width: 160, height: 40))
 
-            // Today's low→high on a second, smaller line inside the same capsule.
             var range: GraphicsContext.ResolvedText?
             var rm = CGSize.zero
             if let mm = b.range {
@@ -206,39 +206,39 @@ struct ComfortDialView: View {
             let box = CGSize(width: max(vm.width, rm.width) + 16,
                              height: vm.height + (range != nil ? rm.height + 1 : 0) + 6)
 
-            var c = CGPoint(x: max(box.width / 2 + 1, min(W - box.width / 2 - 1, b.anchor.x)),
-                            y: b.anchor.y)
-            for _ in 0..<24 {
-                guard let hit = placed.first(where: {
-                    abs($0.center.x - c.x) < ($0.size.width + box.width) / 2 + 2 &&
-                    abs($0.center.y - c.y) < ($0.size.height + box.height) / 2 + 2
-                }) else { break }
-                c.y = hit.center.y + (hit.size.height + box.height) / 2 + 2
-            }
-            c.y = min(c.y, ringH - box.height / 2 - 1)
-            placed.append(Placed(badge: b, center: c, size: box, value: value, range: range))
-        }
+            // Evenly-spaced slot across the arc, then park the capsule just inside
+            // its ring at that angle. Even radii → different rings sit at different
+            // heights, so the row never collides.
+            let slotFrac = n == 1 ? 0.5 : 0.10 + 0.80 * Double(k) / Double(n - 1)
+            let slotAngle = angleAt(slotFrac)
+            // Seat just OUTSIDE the ring (away from the centre readout) and keep
+            // every capsule in the upper half, so none can land on the "15 / Good"
+            // text or the confidence dots that sit in the open lower centre.
+            let seat = polar(slotAngle, b.radius + box.height / 2 + 4)
+            let c = CGPoint(x: max(box.width / 2 + 1, min(W - box.width / 2 - 1, seat.x)),
+                            y: max(box.height / 2 + 1, min(cy - box.height / 2 - 2, seat.y)))
 
-        for p in placed {
-            if hypot(p.center.x - p.badge.anchor.x, p.center.y - p.badge.anchor.y) > 10 {
-                var line = Path(); line.move(to: p.badge.anchor); line.addLine(to: p.center)
-                ctx.stroke(line, with: .color(Sky.muted.opacity(0.3)), lineWidth: 1)
+            // Leader that HUGS the ring — an arc from the reading dot round to the
+            // capsule's slot — rather than a chord across the open centre.
+            if abs(slotFrac - b.frac) > 0.03 {
+                ctx.stroke(arc(angleAt(b.frac), slotAngle, b.radius),
+                           with: .color(Sky.muted.opacity(0.28)), lineWidth: 1)
             }
-            let box = CGRect(x: p.center.x - p.size.width / 2, y: p.center.y - p.size.height / 2,
-                             width: p.size.width, height: p.size.height)
-            let radius = min(p.size.height / 2, 9)
-            ctx.fill(Path(roundedRect: box, cornerRadius: radius), with: .color(Sky.navy))
-            ctx.stroke(Path(roundedRect: box, cornerRadius: radius),
-                       with: .color(p.badge.flagged ? (p.badge.major ? Sky.red : Sky.amber) : p.badge.color),
-                       lineWidth: p.badge.selected ? 2 : 1.4)
 
-            if let range = p.range {
-                let vh = p.value.measure(in: CGSize(width: 160, height: 40)).height
-                let rh = range.measure(in: CGSize(width: 160, height: 40)).height
-                ctx.draw(p.value, at: CGPoint(x: p.center.x, y: box.minY + 3 + vh / 2))
-                ctx.draw(range, at: CGPoint(x: p.center.x, y: box.maxY - 3 - rh / 2))
+            let boxRect = CGRect(x: c.x - box.width / 2, y: c.y - box.height / 2,
+                                 width: box.width, height: box.height)
+            let corner = min(box.height / 2, 9)
+            ctx.fill(Path(roundedRect: boxRect, cornerRadius: corner), with: .color(Sky.navy))
+            ctx.stroke(Path(roundedRect: boxRect, cornerRadius: corner),
+                       with: .color(b.flagged ? (b.major ? Sky.red : Sky.amber) : b.color),
+                       lineWidth: b.selected ? 2 : 1.4)
+
+            if let range {
+                let vh = vm.height, rh = rm.height
+                ctx.draw(value, at: CGPoint(x: c.x, y: boxRect.minY + 3 + vh / 2))
+                ctx.draw(range, at: CGPoint(x: c.x, y: boxRect.maxY - 3 - rh / 2))
             } else {
-                ctx.draw(p.value, at: p.center)
+                ctx.draw(value, at: c)
             }
         }
     }
