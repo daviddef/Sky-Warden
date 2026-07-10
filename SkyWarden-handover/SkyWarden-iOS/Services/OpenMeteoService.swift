@@ -72,7 +72,7 @@ struct OpenMeteoService {
             windGust:        current.windGusts10m,
             windDirection:   windDir,
             humidity:        humidity,
-            uvIndex:         r.daily?.uvIndexMax?.first ?? 0,
+            uvIndex:         r.daily?.uvIndexMax?.first,
             visibility:      nil,
             pressure:        current.surfacePressure,
             condition:       condition,
@@ -181,6 +181,9 @@ enum ServiceError: LocalizedError {
     case httpError(Int)
     case missingData(String)
     case decodingError(String)
+    /// The source doesn't cover this location (e.g. BOM outside Australia).
+    /// Not a failure — the aggregator skips it silently.
+    case notApplicable(String)
 
     var errorDescription: String? {
         switch self {
@@ -188,6 +191,7 @@ enum ServiceError: LocalizedError {
         case .httpError(let c):    return "HTTP \(c)"
         case .missingData(let f):  return "Missing field: \(f)"
         case .decodingError(let m):return "Decode error: \(m)"
+        case .notApplicable(let m):return m
         }
     }
 }

@@ -91,7 +91,7 @@ struct OpenWeatherService {
             windGust:        current.windGust.map { $0 * 3.6 },
             windDirection:   current.windDeg,
             humidity:        Double(current.humidity),
-            uvIndex:         current.uvi ?? 0,
+            uvIndex:         current.uvi,
             visibility:      current.visibility.map { Double($0) / 1000 },
             pressure:        Double(current.pressure),
             condition:       condition,

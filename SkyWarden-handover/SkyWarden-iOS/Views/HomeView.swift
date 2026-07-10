@@ -57,7 +57,9 @@ struct HomeView: View {
 
     // MARK: - Rating banner
     private var ratingBanner: some View {
-        let r = ratingText(for: comfort, season: currentSeason(), place: placeName ?? "your area")
+        let r = ratingText(for: comfort,
+                           season: currentSeason(latitude: location.coordinate.latitude),
+                           place: placeName ?? "your area")
         return HStack(alignment: .top, spacing: 10) {
             Text(r.emoji).font(.system(size: 28))
             Text(r.text)

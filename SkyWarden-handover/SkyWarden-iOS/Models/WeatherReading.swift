@@ -116,7 +116,10 @@ struct WeatherReading: Identifiable {
 
     // Atmosphere
     let humidity: Double         // 0–100
-    let uvIndex: Double
+    /// `nil` when the source doesn't measure UV (e.g. BOM observations).
+    /// Never fake this with 0 — it corrupts the consensus and shows a false
+    /// "sources disagree" flag on the UV ring.
+    let uvIndex: Double?
     let visibility: Double?      // km
     let pressure: Double?        // hPa
 

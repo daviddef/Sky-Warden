@@ -46,21 +46,7 @@
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Sky Warden checks your upcoming outdoor events and flags weather that may affect them.</string>
 
-    <!-- ── App Transport Security ──────────────────────────────────── -->
-    <!-- BOM serves its data feed over plain HTTP; scope an exception to it. -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSExceptionDomains</key>
-        <dict>
-            <key>bom.gov.au</key>
-            <dict>
-                <key>NSExceptionAllowsInsecureHTTPLoads</key>
-                <true/>
-                <key>NSIncludesSubdomains</key>
-                <true/>
-            </dict>
-        </dict>
-    </dict>
+    <!-- No ATS exception needed: BOM now serves its data feed over HTTPS. -->
 
     <!-- ── Background refresh ──────────────────────────────────────── -->
     <key>UIBackgroundModes</key>

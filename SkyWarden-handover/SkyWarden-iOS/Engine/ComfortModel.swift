@@ -201,7 +201,9 @@ struct ComfortData {
             case .humidity: consensus.humidity
             }
         }
-        func sourceValue(_ r: WeatherReading, _ m: ComfortMetric) -> Double {
+        /// `nil` when this source doesn't report the metric — it is then excluded
+        /// from the ring's dots and its disagreement spread.
+        func sourceValue(_ r: WeatherReading, _ m: ComfortMetric) -> Double? {
             switch m {
             case .temp: r.temperature
             case .rain: r.rainProbability
@@ -232,7 +234,10 @@ struct ComfortData {
         }
 
         rings = ComfortMetric.allCases.map { m in
-            let per = readings.map { (source: $0.source, value: sourceValue($0, m)) }
+            let per: [(source: WeatherSource, value: Double)] = readings.compactMap { r in
+                guard let v = sourceValue(r, m) else { return nil }
+                return (source: r.source, value: v)
+            }
             let nums = per.map(\.value)
             let spread = (nums.max() ?? 0) - (nums.min() ?? 0)
             return RingReading(metric: m, value: value(m), minMax: minMax(m),
@@ -272,9 +277,13 @@ func ratingText(for d: ComfortData, season: String, place: String) -> RatingText
     }
 }
 
-/// Southern-hemisphere season from the current month.
-func currentSeason(_ date: Date = Date()) -> String {
-    switch Calendar.current.component(.month, from: date) {
+/// Season from the current month, correct for either hemisphere.
+/// Northern-hemisphere months are offset by six so July reads as summer there
+/// and winter in Australia.
+func currentSeason(latitude: Double, date: Date = Date()) -> String {
+    var month = Calendar.current.component(.month, from: date)
+    if latitude >= 0 { month = (month + 5) % 12 + 1 }
+    switch month {
     case 12, 1, 2: return "summer"
     case 3, 4, 5:  return "autumn"
     case 6, 7, 8:  return "winter"

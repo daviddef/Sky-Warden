@@ -108,6 +108,9 @@ final class WeatherAggregator: ObservableObject {
                 case .success(let reading):
                     readings.append(reading)
                 case .failure(let error):
+                    // A source that doesn't cover this location isn't "unavailable" —
+                    // don't surface BOM as broken when the user is in Paris.
+                    if case ServiceError.notApplicable = error { continue }
                     failed.append(source)
                     print("⚠️ \(source.rawValue) fetch failed: \(error.localizedDescription)")
                 }

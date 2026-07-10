@@ -43,3 +43,25 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ENABLE_PREVIEWS: "YES"
         TARGETED_DEVICE_FAMILY: "1"   # iPhone-only (portrait app; avoids the iPad all-orientations rule)
+
+  SkyWardenTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: SkyWarden
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.defranceski.skywarden.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  SkyWarden:
+    build:
+      targets:
+        SkyWarden: all
+        SkyWardenTests: [test]
+    test:
+      targets: [SkyWardenTests]
+    run:
+      config: Debug

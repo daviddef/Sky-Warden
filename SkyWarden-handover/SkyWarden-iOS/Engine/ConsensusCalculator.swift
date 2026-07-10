@@ -16,7 +16,8 @@ struct ConsensusCalculator {
         let rains     = readings.map(\.rainProbability)
         let winds     = readings.map(\.windSpeed)
         let humidity  = readings.map(\.humidity)
-        let uvValues  = readings.map(\.uvIndex)
+        // Only average sources that actually measure UV (BOM reports none).
+        let uvValues  = readings.compactMap(\.uvIndex)
 
         let consensusTemp  = trimmedMean(temps)
         let consensusRain  = mean(rains)
