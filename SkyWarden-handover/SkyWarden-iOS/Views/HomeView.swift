@@ -10,6 +10,10 @@ struct HomeView: View {
     let failedSources: [WeatherSource]
     let location: CLLocation
     let placeName: String?
+    var tideDay: TideDay? = nil
+    var moonData: MoonData? = nil
+    /// Lets the summary grid jump straight to the tab it summarises.
+    var onOpenTab: ((ContentView.Tab) -> Void)? = nil
 
     @State private var selectedMetric: ComfortMetric?
     @State private var onThisDay: OnThisDay?
@@ -51,6 +55,8 @@ struct HomeView: View {
                 confidenceWidget.padding(.horizontal, 16).padding(.top, 2)
 
                 pills.padding(.horizontal, 16).padding(.top, 10)
+
+                tabSummary.padding(.horizontal, 16).padding(.top, 12)
 
                 onThisDayCard.padding(.horizontal, 16).padding(.top, 10)
                 hourly.padding(.top, 12)
@@ -171,6 +177,72 @@ struct HomeView: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Tab summary grid
+    //
+    // The bridge from the visual layer to the detail tabs: one real number per
+    // tab, tap to go there. Every tile shows a measured value or an em dash —
+    // none invent a number to look complete.
+    private var tabSummary: some View {
+        let tomorrow = consensus.dailyForecast.first
+        let week = consensus.dailyForecast.prefix(7)
+        let wetDays = week.filter { $0.rainProbability >= 50 }.count
+        let nextTide = tideDay?.events.first { $0.time > Date() }
+
+        let tiles: [SummaryTile] = [
+            .init(tab: .today, emoji: "📋",
+                  value: tomorrow.map { "\(Units.tempString($0.tempMax))/\(Units.tempString($0.tempMin))" },
+                  caption: "Today"),
+            .init(tab: .week, emoji: "📅",
+                  value: week.isEmpty ? nil : (wetDays == 0 ? "All dry" : "\(wetDays) wet"),
+                  caption: "\(week.count)-day"),
+            .init(tab: .tides, emoji: "🌊",
+                  value: nextTide.map { "\($0.type.rawValue) \($0.heightDisplay)" },
+                  caption: nextTide.map(\.timeDisplay) ?? "Tides"),
+            .init(tab: .uv, emoji: "☀️",
+                  value: consensus.uvIndex.isFinite ? "\(Int(consensus.uvIndex.rounded()))" : nil,
+                  caption: ComfortMetric.uv.comfortLabel(consensus.uvIndex)),
+            .init(tab: .sky, emoji: moonData?.phase.emoji ?? "🔭",
+                  value: moonData.map { "\(Int(($0.illumination * 100).rounded()))%" },
+                  caption: moonData?.phase.rawValue ?? "Sky"),
+            .init(tab: .sources, emoji: "📡",
+                  value: "\(consensus.sources.count)/\(consensus.sources.count + failedSources.count)",
+                  caption: "Sources"),
+        ]
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("AT A GLANCE")
+                .font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(tiles) { tile in
+                    Button { onOpenTab?(tile.tab) } label: {
+                        VStack(spacing: 2) {
+                            Text(tile.emoji).font(.system(size: 15))
+                            Text(tile.value ?? "—")
+                                .font(.system(size: 13, weight: .semibold)).foregroundColor(Sky.white)
+                                .lineLimit(1).minimumScaleFactor(0.65)
+                            Text(tile.caption)
+                                .font(.system(size: 8.5)).foregroundColor(Sky.muted)
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                        .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(onOpenTab == nil)
+                    .accessibilityLabel("\(tile.caption), \(tile.value ?? "unavailable"). Opens \(tile.tab.label).")
+                }
+            }
+        }
+    }
+
+    private struct SummaryTile: Identifiable {
+        let tab: ContentView.Tab
+        let emoji: String
+        let value: String?
+        let caption: String
+        var id: String { tab.rawValue }
     }
 
     // MARK: - On this day
