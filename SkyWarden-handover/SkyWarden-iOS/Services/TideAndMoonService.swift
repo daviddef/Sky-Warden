@@ -16,7 +16,18 @@ struct WorldTidesService {
         self.apiKey = Bundle.main.object(forInfoDictionaryKey: "WORLDTIDES_API_KEY") as? String ?? ""
     }
 
+    /// Goes through the disk cache. The aggregator asked for tides on every
+    /// 10-minute weather refresh, on every forced pull-to-refresh, on every
+    /// background wake and on every cold launch — each one a paid call returning
+    /// identical numbers, because tides are astronomical and we fetch two days
+    /// at a time. The 6-hour TTL cuts that to ~4 calls/day/device worst case.
     func fetch(location: CLLocation, days: Int = 2) async throws -> TideDay {
+        try await DiskCache.through(key: DiskCache.gridKey("tides", location), ttl: CacheTTL.tides) {
+            try await fetchUncached(location: location, days: days)
+        }
+    }
+
+    func fetchUncached(location: CLLocation, days: Int = 2) async throws -> TideDay {
         guard WeatherProxy.isEnabled || !apiKey.isEmpty else {
             throw ServiceError.missingData("WORLDTIDES_API_KEY")
         }

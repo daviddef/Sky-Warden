@@ -3,13 +3,16 @@
 import Foundation
 
 // MARK: - Tide event
-struct TideEvent: Identifiable {
-    let id = UUID()
+struct TideEvent: Identifiable, Codable {
+    let id: UUID
+    init(time: Date, height: Double, type: TideType) {
+        self.id = UUID(); self.time = time; self.height = height; self.type = type
+    }
     let time: Date
     let height: Double          // metres
     let type: TideType
 
-    enum TideType: String {
+    enum TideType: String, Codable {
         case high = "High"
         case low  = "Low"
     }
@@ -24,21 +27,25 @@ struct TideEvent: Identifiable {
 }
 
 // MARK: - Tide day (all events for one day + curve data)
-struct TideDay: Identifiable {
-    let id = UUID()
+struct TideDay: Identifiable, Codable {
+    let id: UUID
+    init(date: Date, events: [TideEvent], curvePoints: [TideCurvePoint], station: TideStation) {
+        self.id = UUID(); self.date = date; self.events = events
+        self.curvePoints = curvePoints; self.station = station
+    }
     let date: Date
     let events: [TideEvent]
     let curvePoints: [TideCurvePoint]   // interpolated for chart
     let station: TideStation
 }
 
-struct TideCurvePoint {
+struct TideCurvePoint: Codable {
     let time: Date
     let height: Double
 }
 
 // MARK: - Tide station
-struct TideStation: Identifiable {
+struct TideStation: Identifiable, Codable {
     let id: String
     let name: String
     let latitude: Double

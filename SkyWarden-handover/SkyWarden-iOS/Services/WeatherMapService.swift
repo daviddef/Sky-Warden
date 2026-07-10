@@ -2,7 +2,7 @@
 //
 // Three layers, two providers. Measured behaviour (2026-07):
 //
-//   Radar (RainViewer)         10-min cadence, ~5 min latency,  useful to z10
+//   Radar (RainViewer)         10-min cadence, ~5 min latency,  z7 max (512px)
 //   Himawari / GOES infrared   10-min cadence, ~40–60 min latency, z4–z5
 //   IMERG 30-min precipitation 30-min cadence, ~4–6 h latency,     z3–z5
 //
@@ -47,6 +47,10 @@ struct TileLayerSpec {
     let stepMinutes: Int        // native cadence
     let searchBackMinutes: Int  // how far back to hunt for the newest frame
     let frameCount: Int
+    /// Pixels per tile at the source. RainViewer serves 512px renders of the same
+    /// z7 tile, which is twice the density MapKit needs for a 256pt tile — that's
+    /// the difference between a crisp radar and a blurry one on a Retina screen.
+    let tilePixels: Int
     /// Metres across for the initial camera — radar rewards a tighter view.
     let regionMetres: CLLocationDistance
 }
@@ -107,17 +111,18 @@ enum WeatherMapLayer: String, CaseIterable, Identifiable {
             // onto the map. Deeper zooms upsample z7 instead.
             return TileLayerSpec(provider: .rainViewer, id: "radar", matrixSet: "", post: .none,
                                  minZ: 6, maxZ: 7, stepMinutes: 10, searchBackMinutes: 0,
-                                 frameCount: 10, regionMetres: 500_000)
+                                 frameCount: 10, tilePixels: 512, regionMetres: 500_000)
         case .cloud:
             guard let id = Self.geostationaryLayer(forLongitude: lon) else { return nil }
             return TileLayerSpec(provider: .gibs, id: id, matrixSet: "GoogleMapsCompatible_Level6",
                                  post: .infraredCloud, minZ: 4, maxZ: 5, stepMinutes: 10,
-                                 searchBackMinutes: 180, frameCount: 10, regionMetres: 1_400_000)
+                                 searchBackMinutes: 180, frameCount: 10, tilePixels: 256,
+                                 regionMetres: 1_400_000)
         case .rainfall:
             return TileLayerSpec(provider: .gibs, id: "IMERG_Precipitation_Rate_30min",
                                  matrixSet: "GoogleMapsCompatible_Level6", post: .none,
                                  minZ: 3, maxZ: 5, stepMinutes: 30, searchBackMinutes: 720,
-                                 frameCount: 6, regionMetres: 1_400_000)
+                                 frameCount: 6, tilePixels: 256, regionMetres: 1_400_000)
         }
     }
 }
@@ -155,7 +160,7 @@ struct WeatherMapService {
             return URL(string: "\(gibsBase)/\(spec.id)/default/\(frame.token)/\(spec.matrixSet)/\(z)/\(y)/\(x).png")
         case .rainViewer:
             // token is the full frame prefix, e.g. https://…/v2/radar/9f16bd631a61
-            return URL(string: "\(frame.token)/256/\(z)/\(x)/\(y)/\(radarColourScheme)/1_1.png")
+            return URL(string: "\(frame.token)/\(spec.tilePixels)/\(z)/\(x)/\(y)/\(radarColourScheme)/1_1.png")
         }
     }
 
@@ -395,8 +400,11 @@ final class WeatherTileOverlay: MKTileOverlay {
     private static func upsample(_ image: CGImage, dz: Int, ox: Int, oy: Int) -> CGImage? {
         guard dz > 0 else { return image }
         let n = 1 << dz
-        let side = 256.0
-        guard let ctx = CGContext(data: nil, width: 256, height: 256, bitsPerComponent: 8,
+        // Keep the source's density: a 512px radar tile stays 512px when we blow
+        // up a quadrant, so zooming past z7 degrades gracefully instead of sharply.
+        let px = image.width
+        let side = Double(px)
+        guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8,
                                   bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             return nil }

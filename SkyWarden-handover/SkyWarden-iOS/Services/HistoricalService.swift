@@ -6,7 +6,7 @@
 import Foundation
 import CoreLocation
 
-struct OnThisDay {
+struct OnThisDay: Codable {
     let oneYear: Double?
     let fiveYear: Double?
     let average: Double?   // 30-year normal for this calendar day
@@ -15,7 +15,20 @@ struct OnThisDay {
 struct HistoricalService {
     private let baseURL = "https://archive-api.open-meteo.com/v1/archive"
 
+    /// Cached for a day. This request pulls 35 years of daily maxima — a large
+    /// response — and the Now tab re-ran it every time the view reappeared, for
+    /// numbers about the past, which do not change. The key carries the calendar
+    /// day so it rolls over at midnight rather than going stale.
     func onThisDay(location: CLLocation, now: Date = Date()) async throws -> OnThisDay {
+        let cal = Calendar.current
+        let stamp = String(format: "%02d%02d", cal.component(.month, from: now), cal.component(.day, from: now))
+        let key = DiskCache.gridKey("archive", location, precision: 0.25) + "_" + stamp
+        return try await DiskCache.through(key: key, ttl: CacheTTL.archive) {
+            try await onThisDayUncached(location: location, now: now)
+        }
+    }
+
+    func onThisDayUncached(location: CLLocation, now: Date = Date()) async throws -> OnThisDay {
         let cal = Calendar.current
         let year = cal.component(.year, from: now)
         let month = cal.component(.month, from: now)

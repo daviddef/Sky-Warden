@@ -18,7 +18,8 @@ struct WeatherMapView: View {
     @State private var index: Int = 0
     @State private var playing = false
     @State private var loading = true
-    @State private var warming = false
+    @State private var warming = false      // blocking: the frame on screen isn't ready
+    @State private var buffering = false    // background: the other frames are still coming
     @State private var unavailable = false
     @State private var warmTask: Task<Void, Never>?
 
@@ -42,7 +43,7 @@ struct WeatherMapView: View {
                 if loading || warming {
                     VStack(spacing: 10) {
                         ProgressView().tint(Sky.tide)
-                        Text(loading ? "Finding the latest imagery…" : "Loading frames…")
+                        Text(loading ? "Finding the latest imagery…" : "Loading radar…")
                             .font(.system(size: 11)).foregroundColor(Sky.muted)
                     }
                     .padding(16)
@@ -64,7 +65,7 @@ struct WeatherMapView: View {
         .task(id: layer.rawValue + "\(location.coordinate.latitude)") { await load() }
         .onDisappear { warmTask?.cancel() }
         .onReceive(timer) { _ in
-            guard playing, !warming, frames.count > 1 else { return }
+            guard playing, !warming, !buffering, frames.count > 1 else { return }
             index = (index + 1) % frames.count
         }
     }
@@ -93,11 +94,22 @@ struct WeatherMapView: View {
         warmTask?.cancel()
         warming = true
         playing = false
-        let frames = self.frames
+        let all = self.frames
+        let visible = all.indices.contains(index) ? all[index] : all[all.count - 1]
+
         warmTask = Task {
-            await TileSource.shared.warm(spec: spec, frames: frames, rect: rect, zoom: zoom)
+            // Fetch what's ON SCREEN first and let go of the UI immediately —
+            // waiting for all ten frames before showing anything is what made the
+            // tab feel stuck. The rest stream in behind it.
+            await TileSource.shared.warm(spec: spec, frames: [visible], rect: rect, zoom: zoom)
             guard !Task.isCancelled else { return }
             warming = false
+            buffering = all.count > 1
+
+            let rest = all.filter { $0 != visible }
+            await TileSource.shared.warm(spec: spec, frames: rest, rect: rect, zoom: zoom)
+            guard !Task.isCancelled else { return }
+            buffering = false
             playing = true
         }
     }
@@ -135,7 +147,7 @@ struct WeatherMapView: View {
                         .frame(width: 28, height: 28).background(Sky.tide).clipShape(Circle())
                 }
                 .accessibilityLabel(playing ? "Pause" : "Play")
-                .disabled(warming)
+                .disabled(warming || buffering)
 
                 Slider(value: Binding(
                     get: { Double(index) },
@@ -298,7 +310,7 @@ private struct MapCanvas: UIViewRepresentable {
                 self?.reportRegion(mapView)
             }
             settle = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
         }
 
         func reportRegion(_ map: MKMapView) {

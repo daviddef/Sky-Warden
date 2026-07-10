@@ -138,6 +138,10 @@ final class WeatherAggregator: ObservableObject {
     }
 
     // MARK: - Tides fetch
+    /// Called on every refresh — including forced ones and background wakes —
+    /// but WorldTidesService caches on disk for 6 h, so this is nearly always
+    /// free. `force` deliberately does not reach the tide cache: forcing a
+    /// weather refresh should not spend a paid tide credit.
     private func fetchTides(location: CLLocation) async -> TideDay? {
         do {
             return try await Self.withTimeout(sourceTimeout) { try await self.worldTides.fetch(location: location) }

@@ -4,8 +4,9 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage(UnitKey.temperature) private var temperatureUnit = TemperatureUnit.celsius.rawValue
-    @AppStorage(UnitKey.wind)        private var windUnit        = WindUnit.kmh.rawValue
+    @AppStorage(UnitKey.temperature)  private var temperatureUnit = TemperatureUnit.celsius.rawValue
+    @AppStorage(UnitKey.wind)         private var windUnit        = WindUnit.kmh.rawValue
+    @AppStorage(DisplayKey.dialStyle) private var dialStyle       = DialStyle.radial.rawValue
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -20,6 +21,15 @@ struct SettingsView: View {
                             Divider().background(Sky.surface)
                             picker("Wind speed", selection: $windUnit,
                                    options: WindUnit.allCases.map { ($0.rawValue, $0.label) })
+                        }
+
+                        card("DISPLAY") {
+                            picker("Comfort dial", selection: $dialStyle,
+                                   options: DialStyle.allCases.map { ($0.rawValue, $0.title) })
+                            Text(DialStyle(rawValue: dialStyle)?.blurb ?? "")
+                                .font(.system(size: 10)).foregroundColor(Sky.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 2)
                         }
 
                         card("SOURCES") {

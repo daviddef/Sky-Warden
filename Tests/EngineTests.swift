@@ -342,7 +342,7 @@ final class WeatherMapServiceTests: XCTestCase {
                              token: "https://tilecache.rainviewer.com/v2/radar/abc123")
         let url = WeatherMapService.tileURL(spec, frame: frame, z: 8, x: 237, y: 148)!
         XCTAssertEqual(url.absoluteString,
-                       "https://tilecache.rainviewer.com/v2/radar/abc123/256/8/237/148/4/1_1.png")
+                       "https://tilecache.rainviewer.com/v2/radar/abc123/512/8/237/148/4/1_1.png")
     }
 
     /// Regression: RainViewer's free tilecache answers z8+ with a tile reading
@@ -416,6 +416,96 @@ final class WeatherMapServiceTests: XCTestCase {
         XCTAssertEqual(a.x, 14)
         XCTAssertEqual(a.y, 9)
         XCTAssertEqual(a.dz, 0, "no upsampling when the server has the level")
+    }
+
+    /// Radar is fetched at 512px so a 256pt tile gets Retina density; the other
+    /// layers have no such render and must stay at 256.
+    func testRadarRequestsHighDensityTiles() {
+        let radar = WeatherMapLayer.radar.spec(forLongitude: 153.35)!
+        XCTAssertEqual(radar.tilePixels, 512)
+        let frame = MapFrame(date: Date(), token: "https://t/v2/radar/abc")
+        XCTAssertTrue(WeatherMapService.tileURL(radar, frame: frame, z: 7, x: 1, y: 2)!
+            .absoluteString.contains("/512/7/1/2/"))
+
+        XCTAssertEqual(WeatherMapLayer.cloud.spec(forLongitude: 153.35)!.tilePixels, 256)
+    }
+}
+
+// MARK: - Response cache
+//
+// WorldTides bills per call. These tests exist because the app shipped for weeks
+// re-fetching paid tide data on every launch, every pull-to-refresh and every
+// 10-minute background wake, and nothing caught it.
+final class DiskCacheTests: XCTestCase {
+
+    private struct Payload: Codable, Equatable { let value: Int }
+
+    override func setUp() { super.setUp(); DiskCache.clear() }
+    override func tearDown() { DiskCache.clear(); super.tearDown() }
+
+    func testRoundTripsWithinTTL() {
+        DiskCache.save(Payload(value: 42), key: "k")
+        XCTAssertEqual(DiskCache.load(Payload.self, key: "k", ttl: 60), Payload(value: 42))
+    }
+
+    func testExpiredEntryIsAMiss() {
+        DiskCache.save(Payload(value: 42), key: "k")
+        XCTAssertNil(DiskCache.load(Payload.self, key: "k", ttl: -1), "a stale entry must not be served")
+    }
+
+    func testMissingKeyIsAMiss() {
+        XCTAssertNil(DiskCache.load(Payload.self, key: "absent", ttl: 60))
+    }
+
+    /// The whole point: a second call inside the TTL must not hit the network.
+    func testThroughFetchesOnceThenServesFromCache() async throws {
+        var calls = 0
+        let fetch: () async throws -> Payload = { calls += 1; return Payload(value: calls) }
+
+        let first  = try await DiskCache.through(key: "t", ttl: 60, fetch: fetch)
+        let second = try await DiskCache.through(key: "t", ttl: 60, fetch: fetch)
+
+        XCTAssertEqual(calls, 1, "the provider must be billed exactly once")
+        XCTAssertEqual(first, second)
+    }
+
+    /// A provider outage must not pin an empty answer for six hours.
+    func testFailuresAreNotCached() async {
+        struct Boom: Error {}
+        var calls = 0
+        for _ in 0..<2 {
+            calls += 1
+            _ = try? await DiskCache.through(key: "f", ttl: 60) { () -> Payload in throw Boom() }
+        }
+        XCTAssertEqual(calls, 2)
+        XCTAssertNil(DiskCache.load(Payload.self, key: "f", ttl: 60))
+    }
+
+    /// The key quantises to a ~5.5 km grid, so most movement reuses one entry and
+    /// distant places never collide.
+    func testGridKeyQuantisesLocation() {
+        let a = CLLocation(latitude: -27.861, longitude: 153.351)
+        let b = CLLocation(latitude: -27.859, longitude: 153.349)   // same cell
+        let brisbane = CLLocation(latitude: -27.470, longitude: 153.020)
+
+        XCTAssertEqual(DiskCache.gridKey("tides", a), DiskCache.gridKey("tides", b))
+        XCTAssertNotEqual(DiskCache.gridKey("tides", a), DiskCache.gridKey("tides", brisbane))
+    }
+
+    /// Honest about the limit: a grid has edges, so two points a few hundred
+    /// metres apart CAN land in different cells and cost a second call. Bounded
+    /// waste, not eliminated waste — worth knowing before trusting the grid.
+    func testGridKeyStillSplitsAcrossACellBoundary() {
+        let justBelow = CLLocation(latitude: -27.874, longitude: 153.35)
+        let justAbove = CLLocation(latitude: -27.876, longitude: 153.35)   // ~220 m, across -27.875
+        XCTAssertNotEqual(DiskCache.gridKey("tides", justBelow), DiskCache.gridKey("tides", justAbove))
+    }
+
+    func testTidesTTLIsLongEnoughToMatter() {
+        // Tides are astronomical and we fetch two days at a time. Anything under
+        // an hour and we're back to paying per weather refresh.
+        XCTAssertGreaterThanOrEqual(CacheTTL.tides, 3600)
+        XCTAssertGreaterThanOrEqual(CacheTTL.archive, 12 * 3600)
     }
 }
 

@@ -13,6 +13,9 @@ struct HomeView: View {
 
     @State private var selectedMetric: ComfortMetric?
     @State private var onThisDay: OnThisDay?
+    @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.radial.rawValue
+
+    private var dialStyle: DialStyle { DialStyle(rawValue: dialStyleRaw) ?? .radial }
 
     private var comfort: ComfortData { ComfortData(consensus: consensus) }
 
@@ -33,8 +36,16 @@ struct HomeView: View {
                 ratingBanner
                     .padding(.horizontal, 20).padding(.top, 14)
 
-                ComfortDialView(data: comfort, selected: $selectedMetric)
-                    .padding(.top, 8)
+                Group {
+                    switch dialStyle {
+                    case .radial:
+                        RadialDialView(data: comfort, temperature: consensus.temperature,
+                                       confidence: confidence, selected: $selectedMetric)
+                    case .arc:
+                        ComfortDialView(data: comfort, selected: $selectedMetric)
+                    }
+                }
+                .padding(.top, 8)
 
                 // Sits with the rings it describes, not further down the page.
                 confidenceWidget.padding(.horizontal, 16).padding(.top, 2)
@@ -73,7 +84,7 @@ struct HomeView: View {
     // its own colour floods the tile. Comfortable metrics stay quiet. The word
     // ("Humid", "Windy") carries the same meaning, so nothing is colour-alone.
     private var pills: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 5), spacing: 5) {
             ForEach(comfort.rings) { r in
                 let color = Comfort.needleColor(r.metric, r.score)
                 let discomfort = max(0, -r.score)          // 0 = fine, 1 = miserable
@@ -83,34 +94,37 @@ struct HomeView: View {
                         selectedMetric = isTapped ? nil : r.metric
                     }
                 } label: {
-                    VStack(spacing: 2) {
-                        HStack(spacing: 5) {
-                            Text(r.metric.emoji).font(.system(size: 17))
-                            Text(r.metric.format(r.value))
-                                .font(.system(size: 16, weight: .bold))
-                                // On a heavily tinted fill the hue no longer contrasts.
-                                .foregroundColor(discomfort > 0.45 ? Sky.white : color)
+                    VStack(spacing: 1) {
+                        // Five across leaves ~62pt per tile, so the contents stack
+                        // and the disagreement flag becomes a dot rather than a word.
+                        ZStack(alignment: .topTrailing) {
+                            Text(r.metric.emoji).font(.system(size: 15))
+                            if r.hasFlag {
+                                Circle().fill(r.isMajor ? Sky.red : Sky.amber)
+                                    .frame(width: 5, height: 5).offset(x: 6, y: -1)
+                            }
                         }
+                        Text(r.metric.format(r.value))
+                            .font(.system(size: 14, weight: .bold))
+                            // On a heavily tinted fill the hue no longer contrasts.
+                            .foregroundColor(discomfort > 0.45 ? Sky.white : color)
+                            .lineLimit(1).minimumScaleFactor(0.7)
                         Text(r.metric.comfortLabel(r.value))
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 8, weight: .medium))
                             .foregroundColor(discomfort > 0.45 ? Sky.white.opacity(0.85) : Sky.muted)
-                            .lineLimit(1)
-                        if r.hasFlag {
-                            Text("\(r.isMajor ? "🚨" : "⚠️") varies")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(r.isMajor ? Sky.red : Sky.amber)
-                        }
+                            .lineLimit(1).minimumScaleFactor(0.75)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 52)
-                    .padding(.vertical, 10).padding(.horizontal, 6)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .padding(.vertical, 8).padding(.horizontal, 3)
                     .background(pillFill(color, discomfort: discomfort, tapped: isTapped))
-                    .overlay(RoundedRectangle(cornerRadius: 14)
+                    .overlay(RoundedRectangle(cornerRadius: 12)
                         .stroke(color.opacity(isTapped ? 0.7 : 0.18 + 0.42 * discomfort),
                                 lineWidth: isTapped ? 1.8 : 1))
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(r.metric.label), \(r.metric.format(r.value)), \(r.metric.comfortLabel(r.value))")
+                .accessibilityLabel("\(r.metric.label), \(r.metric.format(r.value)), \(r.metric.comfortLabel(r.value))"
+                                    + (r.hasFlag ? ", sources disagree" : ""))
             }
         }
     }
