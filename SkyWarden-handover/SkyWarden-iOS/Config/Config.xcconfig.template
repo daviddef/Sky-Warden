@@ -1,0 +1,21 @@
+// SkyWarden — API Key Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Copy this file to Config.xcconfig  (in the same directory)
+// 2. Fill in your API keys below
+// 3. Add Config.xcconfig to .gitignore — NEVER commit real keys
+//
+// Then in Xcode:
+//   Project → Info → Configurations → set both Debug + Release to "Config"
+//   Target → Info → URL Types or Info.plist as needed
+//
+// Keys are read in Swift via:
+//   Bundle.main.object(forInfoDictionaryKey: "OPENWEATHER_API_KEY") as? String
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Free: https://openweathermap.org/api — One Call API 3.0 (1000 calls/day free)
+OPENWEATHER_API_KEY = YOUR_KEY_HERE
+
+// ~$3/mo: https://www.worldtides.info/developer — 1000 requests/month
+WORLDTIDES_API_KEY = YOUR_KEY_HERE
+
+// No key needed: Open-Meteo, BOM, Moon calculations

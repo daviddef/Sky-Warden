@@ -1,0 +1,17 @@
+// SkyWarden — API key configuration TEMPLATE
+// Copy this file to Config.xcconfig (same directory) and fill in real keys.
+// Config.xcconfig is gitignored; this template is safe to commit.
+
+// Free: https://openweathermap.org/api  (One Call API 3.0, 1,000 calls/day)
+OPENWEATHER_API_KEY = YOUR_KEY_HERE
+
+// ~$3/mo: https://www.worldtides.info/developer  (1,000 requests/month)
+WORLDTIDES_API_KEY = YOUR_KEY_HERE
+
+// Optional: https://gnews.io  (weather news tab, 100 requests/day free)
+GNEWS_API_KEY =
+
+// WeatherKit REST path only — native framework is used by default.
+WEATHERKIT_KEY_ID =
+WEATHERKIT_SERVICE_ID =
+WEATHERKIT_TEAM_ID =

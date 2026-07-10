@@ -1,0 +1,45 @@
+name: SkyWarden
+
+options:
+  bundleIdPrefix: com.defranceski
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# API keys / secrets come from Config.xcconfig (gitignored). Keys defined there
+# become build settings, which Info.plist references via $(KEY) substitution.
+configFiles:
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  SkyWarden:
+    type: application
+    platform: iOS
+    sources:
+      # The existing data + view layer. The Watch complication (ClockKit,
+      # watchOS-only) and the Config templates are excluded from the iOS app.
+      - path: SkyWarden-handover/SkyWarden-iOS
+        excludes:
+          - "WatchApp/**"
+          - "Config/**"
+      - path: Support/iOS/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.defranceski.skywarden
+        INFOPLIST_FILE: Support/iOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/iOS/SkyWarden.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_PREVIEWS: "YES"
+        TARGETED_DEVICE_FAMILY: "1,2"

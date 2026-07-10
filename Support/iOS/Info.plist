@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en_AU</string>
+    <key>CFBundleDisplayName</key>
+    <string>Sky Warden</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string>LaunchBackground</string>
+        <key>UIImageName</key>
+        <string>LaunchLogo</string>
+        <key>UIImageRespectsSafeAreaInsets</key>
+        <true/>
+    </dict>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <key>UIUserInterfaceStyle</key>
+    <string>Dark</string>
+
+    <!-- ── Permissions ─────────────────────────────────────────────── -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Sky Warden uses your location to fetch and reconcile weather from multiple local sources.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Sky Warden reads your calendar to warn you about weather affecting your outdoor events.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Sky Warden checks your upcoming outdoor events and flags weather that may affect them.</string>
+
+    <!-- ── App Transport Security ──────────────────────────────────── -->
+    <!-- BOM serves its data feed over plain HTTP; scope an exception to it. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>bom.gov.au</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSIncludesSubdomains</key>
+                <true/>
+            </dict>
+        </dict>
+    </dict>
+
+    <!-- ── Background refresh ──────────────────────────────────────── -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+        <string>processing</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.defranceski.skywarden.refresh</string>
+    </array>
+
+    <!-- ── API keys (values injected from Config.xcconfig) ─────────── -->
+    <!-- Read at runtime via Bundle.main.object(forInfoDictionaryKey:) -->
+    <key>OPENWEATHER_API_KEY</key>
+    <string>$(OPENWEATHER_API_KEY)</string>
+    <key>WORLDTIDES_API_KEY</key>
+    <string>$(WORLDTIDES_API_KEY)</string>
+    <key>GNEWS_API_KEY</key>
+    <string>$(GNEWS_API_KEY)</string>
+    <key>WEATHERKIT_KEY_ID</key>
+    <string>$(WEATHERKIT_KEY_ID)</string>
+    <key>WEATHERKIT_SERVICE_ID</key>
+    <string>$(WEATHERKIT_SERVICE_ID)</string>
+    <key>WEATHERKIT_TEAM_ID</key>
+    <string>$(WEATHERKIT_TEAM_ID)</string>
+</dict>
+</plist>
