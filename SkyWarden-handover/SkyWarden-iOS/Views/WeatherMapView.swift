@@ -251,23 +251,25 @@ private struct MapCanvas: UIViewRepresentable {
         let c = context.coordinator
         c.onRegionSettled = onRegionSettled
 
-        // MapKit calls rendererFor SYNCHRONOUSLY inside addOverlay, so `active`
-        // must already be set — otherwise every renderer is built with alpha 0
-        // and raising it later never makes those tiles draw.
-        c.active = frames.indices.contains(index) ? frames[index] : frames.last
+        let target = frames.indices.contains(index) ? frames[index] : frames.last
 
         // Add every frame ONCE. Removing and re-adding an overlay on each tick
         // cancels its in-flight tile loads, so nothing ever finishes drawing.
-        // Instead all frames stay mounted and we animate by toggling alpha.
+        // Instead all frames stay mounted and we animate by fading between them.
         let key = spec.id + frames.map(\.token).joined()
         if c.key != key {
+            // MapKit calls rendererFor SYNCHRONOUSLY inside addOverlay, so `active`
+            // must already be set — otherwise every renderer is built with alpha 0
+            // and raising it later never makes those tiles draw.
+            c.setActiveImmediately(target)
             map.overlays.forEach(map.removeOverlay)
             c.renderers.removeAll()
             c.key = key
             for f in frames { map.addOverlay(WeatherTileOverlay(spec: spec, frame: f), level: .aboveRoads) }
             c.reportRegion(map)      // first camera — nothing has moved, so no delegate callback comes
+        } else {
+            c.crossfade(to: target)  // smooth dissolve, no hard cut / blank flash
         }
-        c.applyAlphas()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(isInfrared: spec.post == .infraredCloud) }
@@ -275,20 +277,62 @@ private struct MapCanvas: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
         let isInfrared: Bool
         var key = ""
-        var active: MapFrame?
+        var active: MapFrame?               // the frame we're showing / fading to
+        private var previous: MapFrame?     // the frame fading out
         var renderers: [MapFrame: MKTileOverlayRenderer] = [:]
         var onRegionSettled: ((MKMapRect, Int) -> Void)?
         private var settle: DispatchWorkItem?
         private var lastReported: (rect: MKMapRect, zoom: Int)?
 
+        private var link: CADisplayLink?
+        private var fadeStart: CFTimeInterval = 0
+        private let fadeDuration: CFTimeInterval = 0.4
+
         init(isInfrared: Bool) { self.isInfrared = isInfrared }
 
         private var visibleAlpha: CGFloat { isInfrared ? 0.95 : 0.8 }
 
-        func applyAlphas() {
+        /// First mount / layer change: snap to the frame, no fade.
+        func setActiveImmediately(_ frame: MapFrame?) {
+            link?.invalidate(); link = nil
+            previous = nil
+            active = frame
+            applyAlphas(progress: 1)
+        }
+
+        /// Advance to `frame` by dissolving: the outgoing frame stays up while the
+        /// incoming one draws and fades in, so there's never a blank gap — that
+        /// gap is what read as a flash on every tick.
+        func crossfade(to frame: MapFrame?) {
+            guard frame != active else { return }
+            previous = active
+            active = frame
+            // Nudge the incoming renderer to draw now (invisible overlays are
+            // never drawn); it composites from the warmed tile cache, so this is
+            // cheap and the outgoing frame covers it meanwhile.
+            if let f = frame { renderers[f]?.setNeedsDisplay() }
+            fadeStart = CACurrentMediaTime()
+            if link == nil {
+                link = CADisplayLink(target: self, selector: #selector(step))
+                link?.add(to: .main, forMode: .common)
+            }
+        }
+
+        @objc private func step() {
+            let t = min(1, (CACurrentMediaTime() - fadeStart) / fadeDuration)
+            applyAlphas(progress: t)
+            if t >= 1 { link?.invalidate(); link = nil; previous = nil }
+        }
+
+        /// Alpha alone recomposites the renderer (no `setNeedsDisplay`, which
+        /// would force a tile reload and reintroduce the flicker).
+        private func applyAlphas(progress: Double) {
             for (frame, r) in renderers {
-                let a: CGFloat = (frame == active) ? visibleAlpha : 0
-                if r.alpha != a { r.alpha = a; r.setNeedsDisplay() }
+                let a: CGFloat
+                if frame == active { a = visibleAlpha * CGFloat(progress) }
+                else if frame == previous { a = visibleAlpha * CGFloat(1 - progress) }
+                else { a = 0 }
+                if r.alpha != a { r.alpha = a }
             }
         }
 
