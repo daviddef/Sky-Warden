@@ -58,10 +58,8 @@ struct HomeView: View {
                 }
                 .padding(.top, 8)
 
-                // Both dials now show confidence themselves (radial rim / arc
-                // dots), so this strip carries only what they don't: which
-                // sources fed the consensus, and how many disagree.
-                sourcesWidget.padding(.horizontal, 16).padding(.top, 2)
+                // The source count and disagreements already live in the "Sources
+                // agreeing" row of at-a-glance, so no separate strip here.
 
                 pills.padding(.horizontal, 16).padding(.top, 10)
 
@@ -154,37 +152,6 @@ struct HomeView: View {
             Sky.surface
             color.opacity(alpha)
         }
-    }
-
-    // MARK: - Sources widget
-    //
-    // Confidence itself now lives on the dial (radial rim / arc dots). This strip
-    // carries only what the dial doesn't: how many sources reported, and how many
-    // disagree. It also absorbed the old "OW, WK unavailable" banner — a missing
-    // source is a smaller source count, not its own paragraph.
-    private var sourcesWidget: some View {
-        let used = consensus.sources.count
-        let total = used + failedSources.count
-        return HStack(spacing: 8) {
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.system(size: 11)).foregroundColor(Sky.muted)
-            Text("\(used)/\(total) sources")
-                .font(.system(size: 11, weight: .semibold)).foregroundColor(Sky.text)
-
-            if !failedSources.isEmpty {
-                Text("·").foregroundColor(Sky.muted).font(.system(size: 11))
-                Text("\(failedSources.map(\.short).joined(separator: ", ")) down")
-                    .font(.system(size: 11)).foregroundColor(Sky.muted)
-            }
-            if flagCount > 0 {
-                Text("·").foregroundColor(Sky.muted).font(.system(size: 11))
-                Text("\(flagCount) vary").font(.system(size: 11)).foregroundColor(Sky.amber)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 10))
-        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Tab summary
