@@ -15,7 +15,7 @@ struct ComfortDialView: View {
 
     // Geometry (from the prototype)
     private let W: CGFloat = 340
-    private let ringH: CGFloat = 190
+    private let ringH: CGFloat = 202   // room under the centre line for the good/poor labels
     private let readoutH: CGFloat = 80
     private let cx: CGFloat = 170
     private let cy: CGFloat = 176
@@ -30,7 +30,7 @@ struct ComfortDialView: View {
             ringBox
             readout
                 .frame(width: W, height: readoutH, alignment: .top)
-                .padding(.top, -58)   // pull the readout up into the dial's open lower centre
+                .padding(.top, -70)   // pull the readout up into the dial's open lower centre
         }
         .frame(width: W)
     }
@@ -108,25 +108,20 @@ struct ComfortDialView: View {
                        with: .color(Sky.muted.opacity(0.5)), style: StrokeStyle(lineWidth: 1))
         }
 
-        // Needle tip (+ flag halo)
+        // The needle tip IS the metric's icon. The badges used to sit at 12
+        // o'clock on every ring, which stacked all five into a vertical totem
+        // pole; on the needle they spread across the arc at five distinct angles.
         let tip = polar(angle, rad)
-        let tipR: CGFloat = isSelected ? 8 : 6
-        ctx.stroke(Path(ellipseIn: rect(tip, tipR)), with: .color(Sky.navy), lineWidth: 1.5)
-        ctx.fill(dot(tip, tipR), with: .color(color))
-        ctx.stroke(Path(ellipseIn: rect(tip, tipR)), with: .color(Sky.navy), lineWidth: 1.5)
-        if r.hasFlag {
-            ctx.stroke(Path(ellipseIn: rect(tip, isSelected ? 11 : 9)),
-                       with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.5)), lineWidth: 1.5)
-        }
+        let tipR: CGFloat = isSelected ? 11 : 9
+        ctx.fill(dot(tip, tipR), with: .color(Sky.navy))
+        ctx.stroke(Path(ellipseIn: rect(tip, tipR)), with: .color(color),
+                   lineWidth: isSelected ? 2.5 : 1.8)
+        ctx.draw(Text(metric.emoji).font(.system(size: isSelected ? 13 : 11)), at: tip)
 
-        // Icon badge on the ring track at 12 o'clock
-        let ip = polar(0, rad)
-        let badgeR: CGFloat = isSelected ? 13 : 11
-        ctx.fill(dot(ip, badgeR), with: .color(Sky.navy))
-        ctx.stroke(Path(ellipseIn: rect(ip, badgeR)),
-                   with: .color(isSelected ? color : Sky.surface),
-                   lineWidth: isSelected ? 2 : 1.5)
-        ctx.draw(Text(metric.emoji).font(.system(size: isSelected ? 15 : 13)), at: ip)
+        if r.hasFlag {
+            ctx.stroke(Path(ellipseIn: rect(tip, tipR + 3)),
+                       with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.7)), lineWidth: 1.5)
+        }
     }
 
     private func drawGuides(_ ctx: GraphicsContext) {
@@ -138,10 +133,12 @@ struct ComfortDialView: View {
 
         // Anchored to the canvas edges, not outward from the rings — the latter
         // pushed both labels off the sides and truncated their arrows.
-        ctx.draw(Text("◀ good").font(.system(size: 9)).foregroundColor(Comfort.good.opacity(0.6)),
-                 at: CGPoint(x: 2, y: cy + 4), anchor: .leading)
-        ctx.draw(Text("poor ▶").font(.system(size: 9)).foregroundColor(Comfort.poor.opacity(0.6)),
-                 at: CGPoint(x: W - 2, y: cy + 4), anchor: .trailing)
+        // Below the tips, not level with them: a full-score needle parks its icon
+        // exactly on the horizontal, right where these labels used to sit.
+        ctx.draw(Text("◀ good").font(.system(size: 8.5)).foregroundColor(Comfort.good.opacity(0.6)),
+                 at: CGPoint(x: 2, y: cy + 13), anchor: .leading)
+        ctx.draw(Text("poor ▶").font(.system(size: 8.5)).foregroundColor(Comfort.poor.opacity(0.6)),
+                 at: CGPoint(x: W - 2, y: cy + 13), anchor: .trailing)
     }
 
     // MARK: - Centre readout (separate flow block)
