@@ -125,7 +125,7 @@ struct SceneView: View {
             }
             .frame(width: W, height: H)
 
-            VStack {
+            VStack(spacing: 8) {
                 HStack {
                     glassPill(alignment: .leading,
                               title: clockLabel(hour),
@@ -136,9 +136,10 @@ struct SceneView: View {
                               subtitle: t.map { "tide \($0.frac > 0.6 ? "rising" : $0.frac < 0.4 ? "low" : "turning")" }
                                         ?? "no tide data")
                 }
+                metricCards
                 Spacer()
             }
-            .padding(14)
+            .padding(12)
             .frame(width: W, height: H)
         }
         .frame(width: W, height: H)
@@ -244,6 +245,21 @@ struct SceneView: View {
             }
         }
 
+        // Atmospheric haze band at the horizon — the biggest single cue that
+        // there's depth and air between here and the sea.
+        let hazeColor: Color = isNight ? .hx("1A2C44") : isDawnDusk ? .hx("F0B889") : .hx("CFE6F0")
+        ctx.fill(Path(CGRect(x: 0, y: waterY - 46, width: W, height: 52)),
+                 with: .linearGradient(Gradient(colors: [hazeColor.opacity(0), hazeColor.opacity(0.28)]),
+                                       startPoint: CGPoint(x: 0, y: waterY - 46), endPoint: CGPoint(x: 0, y: waterY + 6)))
+
+        // A distant headland silhouette on the right, behind the sea, for depth.
+        let landColor: Color = isNight ? .hx("0A1526") : isDawnDusk ? .hx("2C2030") : .hx("6E8A6A")
+        var head = Path()
+        head.move(to: CGPoint(x: W * 0.62, y: waterY + 1))
+        head.addQuadCurve(to: CGPoint(x: W + 8, y: waterY - 14), control: CGPoint(x: W * 0.85, y: waterY - 22))
+        head.addLine(to: CGPoint(x: W + 8, y: waterY + 6)); head.addLine(to: CGPoint(x: W * 0.62, y: waterY + 6)); head.closeSubpath()
+        ctx.fill(head, with: .color(landColor.opacity(0.5)))
+
         // Water — two parallax bands
         let farTopColor: Color = isNight ? .hx("0E2036") : Comfort.mix(sky.bottom, .hx("0B3A55"), 0.55)
         let farBotColor: Color = isNight ? .hx("0A1826") : Comfort.mix(sky.bottom, .hx("08283D"), 0.7)
@@ -262,6 +278,21 @@ struct SceneView: View {
         near.addCurve(to: CGPoint(x: W, y: nearTop), control1: CGPoint(x: W * 0.7, y: nearTop - 5), control2: CGPoint(x: W * 0.85, y: nearTop + 4))
         near.addLine(to: CGPoint(x: W, y: H)); near.addLine(to: CGPoint(x: 0, y: H)); near.closeSubpath()
         ctx.fill(near, with: .color(isNight ? .hx("0B1C2E") : Comfort.mix(sky.bottom, .hx("0A3049"), 0.5)))
+
+        // Sun / moon reflection: a shimmering light column on the water beneath
+        // whatever's in the sky. Broken into staggered slivers so it reads as
+        // rippling light, not a solid bar.
+        let lightX: CGFloat = sky.sun == "rise" ? 54 : sky.sun == "set" ? 286 : isNight ? 278 : 170
+        let lightColor: Color = isNight ? .hx("D7DAE2") : sky.sun == "high" ? .hx("FFF3CF") : .hx("FFCE9A")
+        if !isRaining {
+            for i in 0..<7 {
+                let ry = waterY + 4 + CGFloat(i) * 7
+                let halfW = 10.0 + Double(i) * 5.5
+                let jitter = Double((i * 13) % 5) - 2
+                ctx.fill(ellipse(CGPoint(x: lightX + jitter, y: ry), halfW, 1.6),
+                         with: .color(lightColor.opacity((isNight ? 0.28 : 0.5) * (1 - Double(i) / 8))))
+            }
+        }
 
         // Wave crest highlights
         for i in 0..<3 {
@@ -292,6 +323,14 @@ struct SceneView: View {
         sand.addLine(to: CGPoint(x: W, y: H)); sand.addLine(to: CGPoint(x: 0, y: H)); sand.closeSubpath()
         ctx.fill(sand, with: .linearGradient(Gradient(colors: [sandTop, sandLow]),
                                              startPoint: CGPoint(x: 0, y: waterY), endPoint: CGPoint(x: 0, y: H)))
+
+        // Wet-sand sheen where the water meets the beach — a thin reflective band
+        // that sells the waterline far more than a hard edge does.
+        var sheen = Path()
+        sheen.move(to: CGPoint(x: 0, y: waterY + 26))
+        sheen.addQuadCurve(to: CGPoint(x: W, y: waterY + 26), control: CGPoint(x: W * 0.5, y: waterY - 4))
+        ctx.stroke(sheen, with: .color((isNight ? Color.hx("5A7488") : .white).opacity(0.22)),
+                   style: StrokeStyle(lineWidth: 6, lineCap: .round))
 
         drawPalm(ctx, oy: waterY - 64, isNight: isNight, isDawnDusk: isDawnDusk, windy: windy)
         drawHouse(ctx, waterY: waterY, sky: sky, isNight: isNight, isDawnDusk: isDawnDusk)
@@ -406,6 +445,37 @@ struct SceneView: View {
                            control: CGPoint(x: gx + bend * dir * 0.6, y: Double(H) - 38))
             ctx.stroke(p, with: .color(.hx(isNight ? "0E1A10" : isDawnDusk ? "2A2418" : "3F6B3F").opacity(0.9)),
                        style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
+        }
+    }
+
+    // MARK: - Metric cards (the live data, on the image)
+    //
+    // Every comfort metric as a small glass card floating over the scene, tinted
+    // by the same comfort ramp as the dial. This is what "reflect the metrics on
+    // the image" means: the numbers live on the picture, not only in a legend.
+    private var metricCards: some View {
+        let comfort = ComfortData(consensus: consensus)
+        return HStack(spacing: 6) {
+            ForEach(comfort.rings) { r in
+                let color = Comfort.comfortColor(r.score)
+                VStack(spacing: 1) {
+                    Text(r.metric.emoji).font(.system(size: 15))
+                    Text(r.metric.format(r.value))
+                        .font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10)
+                    .stroke(color.opacity(0.55), lineWidth: 1))
+                .overlay(alignment: .topTrailing) {
+                    if r.hasFlag {
+                        Circle().fill(r.isMajor ? Sky.red : Sky.amber)
+                            .frame(width: 5, height: 5).padding(4)
+                    }
+                }
+            }
         }
     }
 
