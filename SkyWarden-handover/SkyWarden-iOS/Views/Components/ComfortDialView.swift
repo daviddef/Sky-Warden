@@ -18,6 +18,7 @@ import SwiftUI
 
 struct ComfortDialView: View {
     let data: ComfortData
+    var temperature: Double = .nan
     var confidence: Double = 1
     @Binding var selected: ComfortMetric?
 
@@ -237,11 +238,18 @@ struct ComfortDialView: View {
             }
         } else {
             let s = Comfort.overallScore(data)
-            VStack(spacing: 5) {
+            VStack(spacing: 3) {
+                // Temperature is the bright anchor; the verdict word carries the
+                // comfort colour beneath it, matching the radial dial's orb.
+                if temperature.isFinite {
+                    Text(Units.tempString(temperature))
+                        .font(.system(size: 30, weight: .ultraLight, design: .rounded))
+                        .foregroundColor(Sky.white)
+                }
                 Text(Comfort.overallLabel(s))
-                    .font(.system(size: 30, weight: .ultraLight, design: .rounded))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Comfort.overallColor(s))
-                confidenceDots
+                confidenceDots.padding(.top, 2)
             }
         }
     }

@@ -46,7 +46,8 @@ struct HomeView: View {
                         RadialDialView(data: comfort, temperature: consensus.temperature,
                                        confidence: confidence, selected: $selectedMetric)
                     case .arc:
-                        ComfortDialView(data: comfort, confidence: confidence, selected: $selectedMetric)
+                        ComfortDialView(data: comfort, temperature: consensus.temperature,
+                                        confidence: confidence, selected: $selectedMetric)
                     }
                 }
                 .padding(.top, 8)
