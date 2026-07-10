@@ -13,28 +13,34 @@ device ─► /functions/v1/weather?source=… ─► Open-Meteo · OpenWeather 
 
 ## One-time setup
 
+The whole thing is scripted. You only do the two steps that need *your* login:
+
 ```sh
-# 1. Install the CLI and sign in
-brew install supabase/tap/supabase
+# 1. Sign in (opens a browser — only you can do this)
 supabase login
 
-# 2. Create a project at https://supabase.com (free tier), then link it
-supabase link --project-ref <your-project-ref>
+# 2. Deploy everything: link, push the schema, set secrets from Config.xcconfig,
+#    deploy the function, and print the two values to paste back.
+bash supabase/deploy.sh <your-project-ref>
+```
 
-# 3. Apply the schema (creates the cache table)
-supabase db push          # or paste supabase/migrations/0001_weather_cache.sql in the SQL editor
+Your project ref is the code in the dashboard URL:
+`https://supabase.com/dashboard/project/<ref>`. It is not a secret. The script
+reads the provider keys from your gitignored `Config.xcconfig` and sets them as
+server-side secrets, so they never pass through anything but your own machine
+and Supabase. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected by the
+platform automatically.
 
-# 4. Set the server-side secrets (these leave the app binary entirely)
-supabase secrets set \
-  WORLDTIDES_API_KEY=<your-worldtides-key> \
-  OPENWEATHER_API_KEY=<your-openweather-key> \
-  GNEWS_API_KEY=<optional-gnews-key> \
-  SKYWARDEN_APP_TOKEN=<make-a-long-random-string>
-# SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are injected automatically.
+<details><summary>What the script runs, if you'd rather do it by hand</summary>
 
-# 5. Deploy the function (public endpoint, guarded by our app token)
+```sh
+supabase link --project-ref <ref>
+supabase db push
+supabase secrets set WORLDTIDES_API_KEY=… OPENWEATHER_API_KEY=… \
+  GNEWS_API_KEY=… SKYWARDEN_APP_TOKEN=<long-random-string>
 supabase functions deploy weather --no-verify-jwt
 ```
+</details>
 
 ## Point the app at it
 
