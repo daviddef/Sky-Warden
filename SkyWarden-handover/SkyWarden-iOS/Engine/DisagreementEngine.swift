@@ -59,7 +59,7 @@ struct DisagreementEngine {
         }
 
         let perSource = Dictionary(
-            uniqueKeysWithValues: readings.map { ($0.source, "\(Int($0.temperature.rounded()))°C") }
+            uniqueKeysWithValues: readings.map { ($0.source, Units.tempString($0.temperature)) }
         )
         return FieldDisagreement(
             fieldKey: "temperature",
@@ -103,7 +103,7 @@ struct DisagreementEngine {
         }
 
         let perSource = Dictionary(
-            uniqueKeysWithValues: readings.map { ($0.source, "\(Int($0.windSpeed.rounded())) km/h") }
+            uniqueKeysWithValues: readings.map { ($0.source, Units.windString($0.windSpeed, withUnit: true)) }
         )
         return FieldDisagreement(
             fieldKey: "wind",

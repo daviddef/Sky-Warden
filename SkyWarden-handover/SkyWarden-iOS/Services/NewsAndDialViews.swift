@@ -40,19 +40,26 @@ struct WeatherNewsService {
 
     private let newsAPIBase = "https://gnews.io/api/v4/search"
 
-    func fetchLocalNews(location: CLLocation, region: String = "SE Queensland") async -> [WeatherNewsItem] {
+    /// `region` and `countryCode` come from reverse geocoding — nothing here is
+    /// hardcoded to Australia.
+    func fetchLocalNews(location: CLLocation,
+                        region: String?,
+                        countryCode: String?) async -> [WeatherNewsItem] {
         let apiKey = (Bundle.main.object(forInfoDictionaryKey: "GNEWS_API_KEY") as? String) ?? ""
         // Need either the proxy (key server-side) or a local key; else fall back to BOM RSS.
         guard WeatherProxy.isEnabled || !apiKey.isEmpty else {
             return await fetchBOMWarnings()
         }
 
-        let items: [URLQueryItem] = [
-            .init(name: "q",        value: "weather \(region) forecast"),
-            .init(name: "lang",     value: "en"),
-            .init(name: "country",  value: "au"),
-            .init(name: "max",      value: "5"),
+        let query = ["weather", region, "forecast"].compactMap { $0 }.joined(separator: " ")
+        var items: [URLQueryItem] = [
+            .init(name: "q",    value: query),
+            .init(name: "lang", value: "en"),
+            .init(name: "max",  value: "5"),
         ]
+        if let countryCode, !countryCode.isEmpty {
+            items.append(.init(name: "country", value: countryCode.lowercased()))
+        }
 
         guard let request = WeatherProxy.request(source: "gnews", directBase: newsAPIBase,
                                                  items: items, keyParam: "apikey", keyValue: apiKey) else { return [] }

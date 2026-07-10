@@ -100,7 +100,7 @@ private struct EventCard: View {
             VStack(spacing: 1) {
                 Text(condEmoji).font(.system(size: 20))
                 if let f = event.forecast {
-                    Text("\(Int(f.tempMax.rounded()))°").font(.system(size: 13, weight: .semibold)).foregroundColor(Sky.white)
+                    Text(Units.tempString(f.tempMax)).font(.system(size: 13, weight: .semibold)).foregroundColor(Sky.white)
                     Text("\(Int(f.rainProbability.rounded()))%💧").font(.system(size: 11)).foregroundColor(Sky.rain)
                 }
             }
@@ -329,6 +329,8 @@ private struct AstroCard: View {
 // ────────────────────────────────────────────────────────────────────────────
 struct NewsView: View {
     let location: CLLocation
+    let region: String?
+    let countryCode: String?
     @State private var items: [WeatherNewsItem] = []
     @State private var loaded = false
 
@@ -347,7 +349,8 @@ struct NewsView: View {
             .padding(16)
         }
         .task {
-            items = await WeatherNewsService().fetchLocalNews(location: location)
+            items = await WeatherNewsService().fetchLocalNews(
+                location: location, region: region, countryCode: countryCode)
             loaded = true
         }
     }

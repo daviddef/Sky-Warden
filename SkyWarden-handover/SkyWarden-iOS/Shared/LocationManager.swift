@@ -14,6 +14,9 @@ enum LocationState {
 final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var state: LocationState = .unknown
     @Published var placeName: String?
+    /// Used to localise news queries instead of hardcoding "SE Queensland" / "au".
+    @Published var region: String?
+    @Published var countryCode: String?
 
     private let manager = CLLocationManager()
     private let geocoder = CLGeocoder()
@@ -68,6 +71,9 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
                 placeName = [place.subLocality, place.locality]
                     .compactMap { $0 }
                     .joined(separator: ", ")
+                // e.g. "Queensland" (or the city when there's no state/province)
+                region = place.administrativeArea ?? place.locality
+                countryCode = place.isoCountryCode          // "AU", "GB", …
             }
         } catch {
             print("Geocode error: \(error)")

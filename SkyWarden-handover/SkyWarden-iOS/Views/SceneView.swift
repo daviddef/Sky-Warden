@@ -424,7 +424,7 @@ struct SceneView: View {
             ("🌊", "Water line", String(format: "%.1fm tide height", tide.now)),
             ("☁️", "Cloud cover", "\(Int((cloudCover * 100).rounded()))% from rain chance"),
             ("🌧", "Rain", rain > 25 ? "Falling · \(Int(rain.rounded()))% chance" : "Dry right now"),
-            ("🌴", "Palm sway", "\(Int(consensus.windSpeed.rounded())) km/h wind"),
+            ("🌴", "Palm sway", "\(Units.windString(consensus.windSpeed, withUnit: true)) wind"),
             ("✨", "Stars", sky.sun == nil ? "Visible now" : "Daytime — hidden"),
         ]
         return VStack(alignment: .leading, spacing: 10) {

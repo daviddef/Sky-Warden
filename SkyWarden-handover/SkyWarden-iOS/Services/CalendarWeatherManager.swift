@@ -175,9 +175,9 @@ final class CalendarWeatherManager: ObservableObject {
         }
 
         if f.windSpeed > 30 {
-            parts.append("strong winds \(Int(f.windSpeed.rounded())) km/h")
+            parts.append("strong winds \(Units.windString(f.windSpeed, withUnit: true))")
         } else if f.windSpeed > 20 {
-            parts.append("\(Int(f.windSpeed.rounded())) km/h winds")
+            parts.append("\(Units.windString(f.windSpeed, withUnit: true)) winds")
         }
 
         if f.hasDisagreement {

@@ -143,6 +143,77 @@ final class ConsensusCalculatorTests: XCTestCase {
     }
 }
 
+// MARK: - Display units
+final class UnitsTests: XCTestCase {
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: UnitKey.temperature)
+        UserDefaults.standard.removeObject(forKey: UnitKey.wind)
+        super.tearDown()
+    }
+    private func set(temp: TemperatureUnit) {
+        UserDefaults.standard.set(temp.rawValue, forKey: UnitKey.temperature)
+    }
+    private func set(wind: WindUnit) {
+        UserDefaults.standard.set(wind.rawValue, forKey: UnitKey.wind)
+    }
+
+    func testDefaultsAreMetric() {
+        XCTAssertEqual(Units.temperature, .celsius)
+        XCTAssertEqual(Units.wind, .kmh)
+        XCTAssertEqual(Units.temp(20), 20, accuracy: 0.001)
+    }
+
+    func testAbsoluteTemperatureTakesTheOffset() {
+        set(temp: .fahrenheit)
+        XCTAssertEqual(Units.temp(0), 32, accuracy: 0.001)
+        XCTAssertEqual(Units.temp(100), 212, accuracy: 0.001)
+        XCTAssertEqual(Units.tempString(20), "68°")
+    }
+
+    /// A temperature *difference* scales by 9/5 and must NOT take the +32 offset.
+    /// Getting this wrong would render a 3°C swing as "+37°F".
+    func testTemperatureDeltaScalesWithoutOffset() {
+        set(temp: .fahrenheit)
+        XCTAssertEqual(Units.tempDelta(0), 0, accuracy: 0.001, "a zero difference stays zero")
+        XCTAssertEqual(Units.tempDelta(5), 9, accuracy: 0.001)
+        XCTAssertEqual(Units.tempDelta(-3), -5.4, accuracy: 0.001)
+        XCTAssertEqual(Units.tempDeltaString(5), "+9°")
+    }
+
+    /// The "on this day" delta must equal the difference of the two numbers the
+    /// user can see. Computing it from unrounded values showed 60° vs 72° as -13°.
+    func testDisplayDeltaAgreesWithTheRoundedNumbersOnScreen() {
+        for unit in TemperatureUnit.allCases {
+            UserDefaults.standard.set(unit.rawValue, forKey: UnitKey.temperature)
+            for (a, b) in [(15.3, 22.3), (17.4, 21.6), (0.0, -3.7), (30.2, 30.4)] {
+                let shownA = Int(Units.temp(a).rounded())
+                let shownB = Int(Units.temp(b).rounded())
+                XCTAssertEqual(Units.displayTempDelta(a, b), shownA - shownB,
+                               "\(unit.label): \(shownA) - \(shownB) must match the delta")
+            }
+        }
+    }
+
+    func testWindConversions() {
+        set(wind: .mph)
+        XCTAssertEqual(Units.windValue(100), 62.1371, accuracy: 0.001)
+        XCTAssertEqual(Units.windString(100, withUnit: true), "62 mph")
+        set(wind: .knots)
+        XCTAssertEqual(Units.windValue(100), 53.9957, accuracy: 0.001)
+        XCTAssertEqual(Units.windString(100, withUnit: true), "54 kn")
+    }
+
+    /// Scoring must stay metric regardless of what the user chose to see.
+    func testUnitPreferenceDoesNotAffectComfortScoring() {
+        let celsiusScore = ComfortMetric.temp.score(25)
+        set(temp: .fahrenheit)
+        XCTAssertEqual(ComfortMetric.temp.score(25), celsiusScore, accuracy: 0.001,
+                       "score() takes °C — display units must not leak into the curves")
+        XCTAssertEqual(ComfortMetric.temp.format(25), "77°", "…but display converts")
+    }
+}
+
 // MARK: - BOM source rules
 final class BOMServiceTests: XCTestCase {
 

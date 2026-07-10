@@ -7,6 +7,11 @@ import CoreLocation
 struct ContentView: View {
     @StateObject private var aggregator      = WeatherAggregator()
     @StateObject private var locationManager = LocationManager()
+    @State private var showSettings = false
+    // Observed so changing a unit re-renders every tab (the views read `Units`,
+    // which reads UserDefaults, so they need a reason to re-evaluate).
+    @AppStorage(UnitKey.temperature) private var temperatureUnit = TemperatureUnit.celsius.rawValue
+    @AppStorage(UnitKey.wind)        private var windUnit        = WindUnit.kmh.rawValue
     // Initial tab (overridable via SKYWARDEN_TAB env var for screenshots/QA).
     @State private var selectedTab: Tab = {
         if let t = ProcessInfo.processInfo.environment["SKYWARDEN_TAB"], let tab = Tab(rawValue: t) { return tab }
@@ -57,7 +62,8 @@ struct ContentView: View {
         VStack(spacing: 0) {
             NavBar(title: locationManager.placeName ?? "Current Location",
                    fetchState: aggregator.fetchState,
-                   onRefresh: { Task { await aggregator.refresh(location: location, force: true) } })
+                   onRefresh: { Task { await aggregator.refresh(location: location, force: true) } },
+                   onSettings: { showSettings = true })
 
             switch aggregator.fetchState {
             case .idle, .loading:
@@ -76,6 +82,7 @@ struct ContentView: View {
 
             SkyTabBar(selected: $selectedTab, flags: flags)
         }
+        .sheet(isPresented: $showSettings) { SettingsView() }
     }
 
     @ViewBuilder
@@ -100,7 +107,9 @@ struct ContentView: View {
         case .sky:
             SkyView(location: location)
         case .news:
-            NewsView(location: location)
+            NewsView(location: location,
+                     region: locationManager.region,
+                     countryCode: locationManager.countryCode)
         case .sources:
             SourcesView(consensus: consensus)
         }
@@ -118,9 +127,10 @@ private struct NavBar: View {
     let title: String
     let fetchState: FetchState
     let onRefresh: () -> Void
+    let onSettings: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: 16) {
             Image(systemName: "location.fill").font(.system(size: 12)).foregroundColor(Sky.muted)
             Text(title).font(SkyType.body).fontWeight(.medium).foregroundColor(Sky.white)
             Spacer()
@@ -131,6 +141,10 @@ private struct NavBar: View {
                     Image(systemName: "arrow.clockwise").font(.system(size: 14)).foregroundColor(Sky.muted)
                 }
             }
+            Button(action: onSettings) {
+                Image(systemName: "gearshape").font(.system(size: 14)).foregroundColor(Sky.muted)
+            }
+            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
         .background(Sky.ink)

@@ -75,7 +75,7 @@ private struct HourDetailRow: View {
             }
 
             // Temperature
-            Text("\(Int(reading.temperature.rounded()))°")
+            Text(Units.tempString(reading.temperature))
                 .font(SkyType.body)
                 .fontWeight(.medium)
                 .foregroundColor(isCurrent ? Sky.white : Sky.text)

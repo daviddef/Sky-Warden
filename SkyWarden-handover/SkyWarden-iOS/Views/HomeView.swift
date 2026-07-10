@@ -133,7 +133,7 @@ struct HomeView: View {
             Text("📅 ON THIS DAY")
                 .font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
             HStack(spacing: 0) {
-                column(value: "\(Int(consensus.temperature.rounded()))°", diff: nil,
+                column(value: Units.tempString(consensus.temperature), diff: nil,
                        label: "today", big: true, first: true)
                 column(value: onThisDay?.oneYear,  label: "1 yr ago")
                 column(value: onThisDay?.fiveYear, label: "5 yrs ago")
@@ -145,25 +145,24 @@ struct HomeView: View {
     }
 
     private func column(value: Double?, label: String) -> some View {
-        let today = consensus.temperature
-        let diff = value.map { today - $0 }
+        // Delta computed from the rounded, displayed values so it agrees with them.
+        let diff = value.map { Units.displayTempDelta(consensus.temperature, $0) }
         return column(
-            value: value.map { "\(Int($0.rounded()))°" } ?? "—",
+            value: value.map { Units.tempString($0) } ?? "—",
             diff: diff,
             label: label, big: false, first: false
         )
     }
 
-    private func column(value: String, diff: Double?, label: String, big: Bool, first: Bool) -> some View {
+    private func column(value: String, diff: Int?, label: String, big: Bool, first: Bool) -> some View {
         VStack(spacing: 2) {
             Text(value)
                 .font(.system(size: big ? 20 : 15, weight: big ? .ultraLight : .light, design: .rounded))
                 .foregroundColor(big ? Sky.white : Sky.text)
-            if let diff, abs(diff) >= 0.5 {
-                let d = Int(diff.rounded())
-                Text("\(d > 0 ? "+" : "")\(d)°")
+            if let diff, diff != 0 {
+                Text("\(diff > 0 ? "+" : "")\(diff)°")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(d > 0 ? Sky.red : d < 0 ? Sky.rain : Sky.muted)
+                    .foregroundColor(diff > 0 ? Sky.red : Sky.rain)
             } else {
                 Text(" ").font(.system(size: 9))
             }
@@ -188,7 +187,7 @@ struct HomeView: View {
                             Text(i == 0 ? "Now" : h.hourLabel)
                                 .font(.system(size: 10)).foregroundColor(Sky.muted)
                             Text(h.condition.emoji).font(.system(size: 18)).padding(.vertical, 3)
-                            Text("\(Int(h.temperature.rounded()))°")
+                            Text(Units.tempString(h.temperature))
                                 .font(.system(size: 13, weight: .medium)).foregroundColor(Sky.white)
                             Text("\(Int(h.rainProbability.rounded()))%")
                                 .font(.system(size: 9)).foregroundColor(Sky.rain)

@@ -86,9 +86,9 @@ struct ConsensusWeather {
         }
     }
 
-    var temperatureDisplay: String { "\(Int(temperature.rounded()))°" }
+    var temperatureDisplay: String { Units.tempString(temperature) }
     var rainDisplay: String { "\(Int(rainProbability.rounded()))%" }
-    var windDisplay: String { "\(Int(windSpeed.rounded())) \(windDirection.compassBearing)" }
+    var windDisplay: String { "\(Units.windString(windSpeed)) \(windDirection.compassBearing)" }
 
     var isStale: Bool { Date().timeIntervalSince(fetchedAt) > 600 }
     var lastUpdatedLabel: String {

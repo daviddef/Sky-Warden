@@ -114,12 +114,22 @@ enum ComfortMetric: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Display only — `v` is always metric (°C, km/h).
     func format(_ v: Double) -> String {
-        let n = Int(v.rounded())
         switch self {
-        case .temp: return "\(n)°"
-        case .rain, .humidity: return "\(n)%"
-        case .wind, .uv: return "\(n)"
+        case .temp: return Units.tempString(v)
+        case .wind: return Units.windString(v)
+        case .rain, .humidity: return "\(Int(v.rounded()))%"
+        case .uv: return "\(Int(v.rounded()))"
+        }
+    }
+
+    /// Formats a spread/difference. Temperature deltas scale by 9/5 with no offset.
+    func formatDelta(_ v: Double) -> String {
+        switch self {
+        case .temp: return "\(Int(Units.tempDelta(v).rounded()))"
+        case .wind: return Units.windString(v)
+        default:    return "\(Int(v.rounded()))"
         }
     }
 }

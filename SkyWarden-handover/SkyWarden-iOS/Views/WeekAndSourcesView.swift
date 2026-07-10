@@ -68,8 +68,8 @@ private struct DailyRow: View {
             }
             .frame(width: 44)
             HStack(spacing: 4) {
-                Text("\(Int(day.tempMax.rounded()))°").font(SkyType.body).fontWeight(.medium).foregroundColor(Sky.white)
-                Text("\(Int(day.tempMin.rounded()))°").font(SkyType.body).foregroundColor(Sky.muted)
+                Text(Units.tempString(day.tempMax)).font(SkyType.body).fontWeight(.medium).foregroundColor(Sky.white)
+                Text(Units.tempString(day.tempMin)).font(SkyType.body).foregroundColor(Sky.muted)
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 13)
@@ -145,7 +145,7 @@ struct SourcesView: View {
                         Text(r.metric.label).font(.system(size: 13)).foregroundColor(Sky.text)
                         Spacer()
                         if r.hasFlag {
-                            Text("\(r.isMajor ? "🚨" : "⚠️") \(Int(r.spread.rounded()))")
+                            Text("\(r.isMajor ? "🚨" : "⚠️") \(r.metric.formatDelta(r.spread))")
                                 .font(.system(size: 9, weight: .bold)).foregroundColor(r.isMajor ? Sky.red : Sky.amber)
                         }
                         Text(r.metric.format(r.value)).font(.system(size: 14, weight: .bold)).foregroundColor(color)
@@ -178,7 +178,7 @@ struct SourcesView: View {
                             Text(r.metric.format(s.value)).font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(Sky.white).frame(width: 34, alignment: .trailing)
                             if abs(diff) >= 0.5 {
-                                Text("\(diff > 0 ? "+" : "")\(Int(diff.rounded()))")
+                                Text("\(diff > 0 ? "+" : "")\(r.metric.formatDelta(diff))")
                                     .font(.system(size: 10))
                                     .foregroundColor(abs(diff) >= r.metric.disagreementThreshold ? Sky.amber : Sky.muted)
                                     .frame(width: 26, alignment: .trailing)
