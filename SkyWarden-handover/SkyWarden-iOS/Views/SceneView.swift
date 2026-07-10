@@ -78,8 +78,12 @@ struct SceneView: View {
         return Double(c.hour ?? 12) + Double(c.minute ?? 0) / 60
     }
 
-    private var tide: (now: Double, frac: Double) {
-        guard let events = tideDay?.events, events.count >= 2 else { return (1.0, 0.5) }
+    /// `nil` when there is no tide data. It used to fall back to (1.0m, mid) and
+    /// the scene printed "1.0m" in the same pill it uses for a real reading —
+    /// a fabricated measurement, presented as measured. Now the water sits at a
+    /// neutral level and the pill says so.
+    private var tide: (now: Double, frac: Double)? {
+        guard let events = tideDay?.events, events.count >= 2 else { return nil }
         let pts = events.map { (h: fracHour($0.time), v: $0.height) }.sorted { $0.h < $1.h }
         let heights = pts.map(\.v)
         let lo = heights.min() ?? 0, hi = heights.max() ?? 1
@@ -117,7 +121,7 @@ struct SceneView: View {
         let t = tide
         return ZStack {
             Canvas { ctx, _ in
-                drawScene(ctx, sky: sky, rain: rain, wind: wind, tideFrac: t.frac)
+                drawScene(ctx, sky: sky, rain: rain, wind: wind, tideFrac: t?.frac ?? 0.5)
             }
             .frame(width: W, height: H)
 
@@ -128,8 +132,9 @@ struct SceneView: View {
                               subtitle: phaseLabel(sky))
                     Spacer()
                     glassPill(alignment: .trailing,
-                              title: String(format: "%.1fm", t.now),
-                              subtitle: "tide \(t.frac > 0.6 ? "rising" : t.frac < 0.4 ? "low" : "turning")")
+                              title: t.map { String(format: "%.1fm", $0.now) } ?? "—",
+                              subtitle: t.map { "tide \($0.frac > 0.6 ? "rising" : $0.frac < 0.4 ? "low" : "turning")" }
+                                        ?? "no tide data")
                 }
                 Spacer()
             }
@@ -421,7 +426,8 @@ struct SceneView: View {
         let cloudCover = rain > 15 ? min(1, rain / 65) : 0.12
         let items: [(String, String, String)] = [
             ("🌅", "Sky colour", "Time of day, live"),
-            ("🌊", "Water line", String(format: "%.1fm tide height", tide.now)),
+            ("🌊", "Water line", tide.map { String(format: "%.1fm tide height", $0.now) }
+                                 ?? "No tide data — drawn at mid level"),
             ("☁️", "Cloud cover", "\(Int((cloudCover * 100).rounded()))% from rain chance"),
             ("🌧", "Rain", rain > 25 ? "Falling · \(Int(rain.rounded()))% chance" : "Dry right now"),
             ("🌴", "Palm sway", "\(Units.windString(consensus.windSpeed, withUnit: true)) wind"),
@@ -444,7 +450,7 @@ struct SceneView: View {
                     .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 12))
                 }
             }
-            Text("Redraws through the day. Sky blends smoothly between dawn, day, dusk and night. Water rises and falls with real tide predictions; rain and cloud density map to forecast probability.")
+            Text("Redraws through the day. Sky blends smoothly between dawn, day, dusk and night. Water rises and falls with real tide predictions when they are available, and sits at mid level when they are not; rain and cloud density map to forecast probability.")
                 .font(.system(size: 10)).foregroundColor(Sky.muted).lineSpacing(3)
         }
     }
