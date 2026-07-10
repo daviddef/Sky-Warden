@@ -273,6 +273,86 @@ final class UnitsTests: XCTestCase {
     }
 }
 
+// MARK: - Weather map tiles
+final class WeatherMapServiceTests: XCTestCase {
+
+    /// Each geostationary satellite only sees one face of the Earth.
+    func testSatelliteChosenByLongitude() {
+        XCTAssertEqual(WeatherMapLayer.geostationaryLayer(forLongitude: 153.35),
+                       "Himawari_AHI_Band13_Clean_Infrared")           // Hope Island
+        XCTAssertEqual(WeatherMapLayer.geostationaryLayer(forLongitude: -74.0),
+                       "GOES-East_ABI_Band13_Clean_Infrared")          // New York
+        XCTAssertEqual(WeatherMapLayer.geostationaryLayer(forLongitude: -122.4),
+                       "GOES-West_ABI_Band13_Clean_Infrared")          // San Francisco
+        XCTAssertNil(WeatherMapLayer.geostationaryLayer(forLongitude: -0.12),
+                     "London sits between the discs — no live cloud layer")
+    }
+
+    /// Rainfall is global; the cloud layer isn't.
+    func testRainfallHasASpecEverywhereCloudDoesNot() {
+        XCTAssertNotNil(WeatherMapLayer.rainfall.spec(forLongitude: -0.12))
+        XCTAssertNil(WeatherMapLayer.cloud.spec(forLongitude: -0.12))
+        XCTAssertNotNil(WeatherMapLayer.cloud.spec(forLongitude: 153.35))
+    }
+
+    func testFrameFlooringMatchesLayerCadence() {
+        let d = Date(timeIntervalSince1970: 1_783_000_000)  // arbitrary
+        let f10 = WeatherMapService.floor(d, toStep: 10)
+        let f30 = WeatherMapService.floor(d, toStep: 30)
+        XCTAssertEqual(Int(f10.timeIntervalSince1970) % 600, 0)
+        XCTAssertEqual(Int(f30.timeIntervalSince1970) % 1800, 0)
+        XCTAssertLessThanOrEqual(f10, d)
+    }
+
+    func testFramesRunOldestToNewestAtTheLayerStep() {
+        let spec = WeatherMapLayer.cloud.spec(forLongitude: 153.35)!
+        let latest = WeatherMapService.floor(Date(), toStep: spec.stepMinutes)
+        let frames = WeatherMapService.frames(endingAt: latest, spec: spec, count: 4)
+        XCTAssertEqual(frames.count, 4)
+        XCTAssertEqual(frames.last, latest, "the newest frame is last")
+        XCTAssertEqual(frames[1].timeIntervalSince(frames[0]), Double(spec.stepMinutes * 60), accuracy: 1)
+    }
+
+    /// GIBS is WMTS: the path is {z}/{row}/{col} — row (y) BEFORE col (x).
+    /// Swapping them silently renders the wrong hemisphere.
+    func testTileURLPutsRowBeforeColumn() {
+        let spec = WeatherMapLayer.cloud.spec(forLongitude: 153.35)!
+        let frame = Date(timeIntervalSince1970: 1_783_000_800)
+        let url = WeatherMapService.tileURL(spec, frame: frame, z: 5, x: 29, y: 18)!
+        XCTAssertTrue(url.absoluteString.hasSuffix("/5/18/29.png"), url.absoluteString)
+        XCTAssertTrue(url.absoluteString.contains("Himawari_AHI_Band13_Clean_Infrared"))
+    }
+
+    func testTileIndexForHopeIsland() {
+        let (x, y) = WeatherMapService.tileIndex(.init(latitude: -27.87, longitude: 153.35), z: 5)
+        XCTAssertEqual(x, 29)
+        XCTAssertEqual(y, 18)
+    }
+
+    /// MapKit asks for z6 at phone zoom but GIBS stops at z5, so every request
+    /// has to resolve to an ancestor tile plus a quadrant within it.
+    func testAncestorResolvesUnservedZoomToItsParentQuadrant() {
+        // The four z6 children of the Hope Island z5 tile (29, 18).
+        for (x, y, ox, oy) in [(58, 36, 0, 0), (59, 36, 1, 0), (58, 37, 0, 1), (59, 37, 1, 1)] {
+            let a = WeatherMapService.ancestor(z: 6, x: x, y: y, maxZ: 5)
+            XCTAssertEqual(a.z, 5)
+            XCTAssertEqual(a.x, 29)
+            XCTAssertEqual(a.y, 18)
+            XCTAssertEqual(a.dz, 1)
+            XCTAssertEqual(a.ox, ox)
+            XCTAssertEqual(a.oy, oy)
+        }
+    }
+
+    func testAncestorIsIdentityAtOrBelowTheServedZoom() {
+        let a = WeatherMapService.ancestor(z: 4, x: 14, y: 9, maxZ: 5)
+        XCTAssertEqual(a.z, 4)
+        XCTAssertEqual(a.x, 14)
+        XCTAssertEqual(a.y, 9)
+        XCTAssertEqual(a.dz, 0, "no upsampling when the server has the level")
+    }
+}
+
 // MARK: - BOM source rules
 final class BOMServiceTests: XCTestCase {
 

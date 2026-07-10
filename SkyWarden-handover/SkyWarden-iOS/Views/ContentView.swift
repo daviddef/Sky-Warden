@@ -19,18 +19,18 @@ struct ContentView: View {
     }()
 
     enum Tab: String, CaseIterable, Identifiable {
-        case now, scene, today, week, tides, plans, uv, sky, news, sources
+        case now, scene, map, today, week, tides, plans, uv, sky, news, sources
         var id: String { rawValue }
         var emoji: String {
             switch self {
-            case .now: "🌤"; case .scene: "🏖"; case .today: "📋"; case .week: "📅"
+            case .now: "🌤"; case .scene: "🏖"; case .map: "🗺"; case .today: "📋"; case .week: "📅"
             case .tides: "🌊"; case .plans: "📆"; case .uv: "☀️"; case .sky: "🔭"
             case .news: "📰"; case .sources: "📡"
             }
         }
         var label: String {
             switch self {
-            case .now: "Now"; case .scene: "Scene"; case .today: "Today"; case .week: "Week"
+            case .now: "Now"; case .scene: "Scene"; case .map: "Map"; case .today: "Today"; case .week: "Week"
             case .tides: "Tides"; case .plans: "Plans"; case .uv: "UV"; case .sky: "Sky"
             case .news: "News"; case .sources: "Sources"
             }
@@ -93,6 +93,8 @@ struct ContentView: View {
                      location: location, placeName: locationManager.placeName)
         case .scene:
             SceneView(consensus: consensus, tideDay: aggregator.tideDay)
+        case .map:
+            WeatherMapView(location: location)
         case .today:
             TodayDetailView(hourly: consensus.hourlyForecast)
         case .week:
