@@ -1,5 +1,5 @@
-// SkyWarden — Now tab
-// Rating banner · comfort dial · pills · confidence strip · on-this-day · hourly.
+// Sky Warden — Now tab
+// Rating banner · comfort dial · confidence widget · pills · on-this-day · hourly.
 // Nothing else lives here (moon/tides/etc. have their own tabs) per the handover.
 
 import SwiftUI
@@ -36,14 +36,11 @@ struct HomeView: View {
                 ComfortDialView(data: comfort, selected: $selectedMetric)
                     .padding(.top, 8)
 
-                pills.padding(.horizontal, 16).padding(.top, 8)
+                // Sits with the rings it describes, not further down the page.
+                confidenceWidget.padding(.horizontal, 16).padding(.top, 2)
 
-                if !failedSources.isEmpty {
-                    FailedSourcesNotice(sources: failedSources)
-                        .padding(.horizontal, 16).padding(.top, 10)
-                }
+                pills.padding(.horizontal, 16).padding(.top, 10)
 
-                confidenceStrip.padding(.horizontal, 16).padding(.top, 10)
                 onThisDayCard.padding(.horizontal, 16).padding(.top, 10)
                 hourly.padding(.top, 12)
 
@@ -71,22 +68,33 @@ struct HomeView: View {
     }
 
     // MARK: - Pills (mirror the ring taps, bigger touch target)
+    //
+    // A pill's fill IS its comfort: the more uncomfortable the metric, the more
+    // its own colour floods the tile. Comfortable metrics stay quiet. The word
+    // ("Humid", "Windy") carries the same meaning, so nothing is colour-alone.
     private var pills: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
             ForEach(comfort.rings) { r in
                 let color = Comfort.needleColor(r.metric, r.score)
+                let discomfort = max(0, -r.score)          // 0 = fine, 1 = miserable
                 let isTapped = selectedMetric == r.metric
                 Button {
                     withAnimation(.spring(response: 0.3)) {
                         selectedMetric = isTapped ? nil : r.metric
                     }
                 } label: {
-                    VStack(spacing: 3) {
+                    VStack(spacing: 2) {
                         HStack(spacing: 5) {
                             Text(r.metric.emoji).font(.system(size: 17))
                             Text(r.metric.format(r.value))
-                                .font(.system(size: 16, weight: .bold)).foregroundColor(color)
+                                .font(.system(size: 16, weight: .bold))
+                                // On a heavily tinted fill the hue no longer contrasts.
+                                .foregroundColor(discomfort > 0.45 ? Sky.white : color)
                         }
+                        Text(r.metric.comfortLabel(r.value))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(discomfort > 0.45 ? Sky.white.opacity(0.85) : Sky.muted)
+                            .lineLimit(1)
                         if r.hasFlag {
                             Text("\(r.isMajor ? "🚨" : "⚠️") varies")
                                 .font(.system(size: 9, weight: .semibold))
@@ -95,36 +103,60 @@ struct HomeView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 52)
                     .padding(.vertical, 10).padding(.horizontal, 6)
-                    .background(isTapped ? color.opacity(0.13) : Sky.surface)
+                    .background(pillFill(color, discomfort: discomfort, tapped: isTapped))
                     .overlay(RoundedRectangle(cornerRadius: 14)
-                        .stroke(isTapped ? color.opacity(0.45) : .clear, lineWidth: 1.5))
+                        .stroke(color.opacity(isTapped ? 0.7 : 0.18 + 0.42 * discomfort),
+                                lineWidth: isTapped ? 1.8 : 1))
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("\(r.metric.label), \(r.metric.format(r.value)), \(r.metric.comfortLabel(r.value))")
             }
         }
     }
 
-    // MARK: - Confidence strip
-    private var confidenceStrip: some View {
+    private func pillFill(_ color: Color, discomfort: Double, tapped: Bool) -> some View {
+        // Comfortable metrics barely tint; a bad one saturates its tile.
+        let alpha = 0.07 + 0.34 * discomfort + (tapped ? 0.08 : 0)
+        return ZStack {
+            Sky.surface
+            color.opacity(alpha)
+        }
+    }
+
+    // MARK: - Confidence widget
+    //
+    // Replaces both the old full-width strip and the "OW, WK unavailable"
+    // banner: a missing source is only interesting as a dent in confidence and
+    // a source count, not as its own paragraph.
+    private var confidenceWidget: some View {
         let color = confidence >= 0.8 ? Sky.green : confidence >= 0.5 ? Sky.amber : Sky.red
-        return HStack(spacing: 10) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Sky.card).frame(height: 4)
-                    Capsule().fill(color)
-                        .frame(width: geo.size.width * confidence, height: 4)
-                }
+        let used = consensus.sources.count
+        let total = used + failedSources.count
+        return HStack(spacing: 8) {
+            ZStack {
+                Circle().stroke(Sky.card, lineWidth: 3).frame(width: 18, height: 18)
+                Circle().trim(from: 0, to: confidence)
+                    .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 18, height: 18)
             }
-            .frame(height: 4)
-            Text("\(Int((confidence * 100).rounded()))% conf")
+            Text("\(Int((confidence * 100).rounded()))% confidence")
                 .font(.system(size: 11, weight: .semibold)).foregroundColor(color)
+
+            Text("·").foregroundColor(Sky.muted).font(.system(size: 11))
+            Text("\(used)/\(total) sources")
+                .font(.system(size: 11)).foregroundColor(Sky.muted)
+
             if flagCount > 0 {
-                Text("⚠️ \(flagCount) vary").font(.system(size: 11)).foregroundColor(Sky.amber)
+                Text("·").foregroundColor(Sky.muted).font(.system(size: 11))
+                Text("\(flagCount) vary").font(.system(size: 11)).foregroundColor(Sky.amber)
             }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - On this day
@@ -201,21 +233,6 @@ struct HomeView: View {
                 .padding(.horizontal, 16)
             }
         }
-    }
-}
-
-// MARK: - Failed sources notice
-private struct FailedSourcesNotice: View {
-    let sources: [WeatherSource]
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "wifi.exclamationmark")
-                .font(.system(size: 12)).foregroundColor(Sky.muted)
-            Text("\(sources.map(\.short).joined(separator: ", ")) unavailable — consensus from remaining sources")
-                .font(.system(size: 10)).foregroundColor(Sky.muted)
-        }
-        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
