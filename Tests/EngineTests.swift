@@ -589,3 +589,281 @@ final class BOMServiceTests: XCTestCase {
         XCTAssertEqual(BOMService.condition(cloud: "-", weather: "-", rain: 5, humidity: 50), .rain)
     }
 }
+
+// MARK: - Forecast skill tracking (the moat)
+//
+// This decides which forecast the user sees, so it is tested adversarially:
+// every rule that stops a false accuracy claim has a test that tries to break it.
+final class SkillTableTests: XCTestCase {
+
+    private let t0 = Date(timeIntervalSince1970: 1_783_000_000)
+    private func pf(_ src: WeatherSource, _ m: SkillMetric, _ offset: TimeInterval, _ v: Double) -> PendingForecast {
+        PendingForecast(source: src.rawValue, metric: m, targetTime: t0.addingTimeInterval(offset), predicted: v)
+    }
+
+    func testRecordsOnlyFutureForecasts() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 3600, 20), pf(.gfs, .temp, -3600, 20)], now: t0)
+        XCTAssertEqual(t.pending.count, 1, "you cannot forecast the past")
+        XCTAssertEqual(t.pending.first?.source, WeatherSource.ecmwf.rawValue)
+    }
+
+    func testLaterRefreshSupersedesTheSamePrediction() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 3600, 20)], now: t0)
+        t.record([pf(.ecmwf, .temp, 3600, 22)], now: t0)
+        XCTAssertEqual(t.pending.count, 1, "one prediction per source, metric and hour")
+        XCTAssertEqual(t.pending.first?.predicted, 22)
+    }
+
+    func testScoringAccumulatesMeanAbsoluteError() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 3600, 20), pf(.gfs, .temp, 3600, 25)], now: t0)
+        let scored = t.score(observed: [.temp: 21], at: t0.addingTimeInterval(3600))
+        XCTAssertEqual(scored, 2)
+        XCTAssertEqual(t.mae(.ecmwf, .temp)!, 1, accuracy: 0.001)
+        XCTAssertEqual(t.mae(.gfs, .temp)!, 4, accuracy: 0.001)
+        XCTAssertTrue(t.pending.isEmpty, "a scored forecast is consumed")
+    }
+
+    /// The app was closed over the target hour. Scoring it against a much later
+    /// thermometer would blame a forecast for the wrong moment.
+    func testAForecastWhoseHourPassedUnscoredIsDroppedNotMisScored() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 3600, 20)], now: t0)
+        let scored = t.score(observed: [.temp: 35], at: t0.addingTimeInterval(3600 + 6 * 3600))
+        XCTAssertEqual(scored, 0)
+        XCTAssertTrue(t.pending.isEmpty)
+        XCTAssertNil(t.mae(.ecmwf, .temp), "no sample, therefore no opinion")
+    }
+
+    func testForecastStillInWindowSurvivesAMissingObservation() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 3600, 20)], now: t0)
+        t.score(observed: [:], at: t0.addingTimeInterval(3600))     // BOM was down
+        XCTAssertEqual(t.pending.count, 1, "wait for the next refresh")
+        t.score(observed: [.temp: 20], at: t0.addingTimeInterval(3600 + 600))
+        XCTAssertEqual(t.samples(.ecmwf, .temp), 1)
+    }
+
+    func testFutureForecastIsNotScoredEarly() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 6 * 3600, 20)], now: t0)
+        XCTAssertEqual(t.score(observed: [.temp: 20], at: t0), 0)
+        XCTAssertEqual(t.pending.count, 1)
+    }
+
+    /// Regression: the match window used to be symmetric, so a forecast for
+    /// 11:00 was graded against the 10:35 thermometer — marked wrong for
+    /// correctly predicting a temperature that hadn't happened yet, then
+    /// consumed, so the real 11:00 reading never saw it. Refreshes run every
+    /// ten minutes, so this fired constantly.
+    func testAForecastIsNeverScoredBeforeItsHourArrives() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 3600, 22)], now: t0)          // predicts 22° at 11:00
+
+        // 10:35 — inside a symmetric ±30 min window, but the hour hasn't come.
+        XCTAssertEqual(t.score(observed: [.temp: 18], at: t0.addingTimeInterval(3600 - 25 * 60)), 0)
+        XCTAssertEqual(t.pending.count, 1, "still waiting for its hour")
+        XCTAssertNil(t.mae(.ecmwf, .temp), "no false error recorded")
+
+        // 11:00 — now it may be scored, against the right observation.
+        XCTAssertEqual(t.score(observed: [.temp: 22], at: t0.addingTimeInterval(3600)), 1)
+        XCTAssertEqual(t.mae(.ecmwf, .temp)!, 0, accuracy: 0.001, "it was exactly right")
+    }
+
+    /// A refresh shortly after the hour still scores it — that is the whole
+    /// point of the tolerance.
+    func testAForecastIsScoredShortlyAfterItsHour() {
+        var t = SkillTable()
+        t.record([pf(.ecmwf, .temp, 3600, 22)], now: t0)
+        XCTAssertEqual(t.score(observed: [.temp: 20], at: t0.addingTimeInterval(3600 + 20 * 60)), 1)
+        XCTAssertEqual(t.mae(.ecmwf, .temp)!, 2, accuracy: 0.001)
+    }
+
+    /// Truth must be a thermometer. Scoring forecasts against the consensus
+    /// would reward agreeing with the crowd rather than being right.
+    func testTruthComesOnlyFromAnObservationSource() {
+        let forecasts = [reading(.ecmwf, temp: 20), reading(.gfs, temp: 22)]
+        XCTAssertNil(SkillTable.observation(from: forecasts))
+
+        let withObs = forecasts + [reading(.bom, temp: 19, rain: nil, uv: nil)]
+        let truth = SkillTable.observation(from: withObs)
+        XCTAssertEqual(truth?[.temp], 19)
+    }
+
+    /// BOM makes no forecast, so it must never be filed and never be scored
+    /// against itself — which would give it a perfect record for free.
+    func testObservationSourceIsNeverFiledAsAForecast() {
+        let readings = [reading(.bom, temp: 19, rain: nil, uv: nil)]
+        XCTAssertTrue(SkillTable.forecasts(from: readings, now: t0).isEmpty)
+    }
+
+    // MARK: Weighting
+
+    private func table(with maes: [WeatherSource: Double], samples: Int) -> SkillTable {
+        var t = SkillTable()
+        for (src, mae) in maes {
+            for i in 0..<samples {
+                t.record([pf(src, .temp, Double(i + 1) * 3600, 20 + mae)], now: t0)
+                t.score(observed: [.temp: 20], at: t0.addingTimeInterval(Double(i + 1) * 3600))
+            }
+        }
+        return t
+    }
+
+    func testNoWeightsUntilEverySourceHasEnoughSamples() {
+        let t = table(with: [.ecmwf: 1, .gfs: 4], samples: SkillTable.minSamples - 1)
+        XCTAssertNil(t.weights(for: .temp, among: [.ecmwf, .gfs]),
+                     "an unearned weighting is worse than none")
+    }
+
+    /// A source we happen to have measured a lot must not outrank one we simply
+    /// haven't measured yet. That's a fact about our data, not about the forecast.
+    func testAWellMeasuredSourceCannotOutrankAnUnmeasuredOne() {
+        var t = table(with: [.ecmwf: 1], samples: SkillTable.minSamples + 5)
+        t.record([pf(.icon, .temp, 3600, 20)], now: t0)
+        XCTAssertNil(t.weights(for: .temp, among: [.ecmwf, .icon]))
+    }
+
+    func testTheMoreAccurateSourceEarnsMoreWeight() {
+        let t = table(with: [.ecmwf: 1, .gfs: 4], samples: SkillTable.minSamples)
+        let w = t.weights(for: .temp, among: [.ecmwf, .gfs])!
+        XCTAssertGreaterThan(w[.ecmwf]!, w[.gfs]!)
+        XCTAssertEqual(w.values.reduce(0, +), 1, accuracy: 0.001, "weights are normalised")
+    }
+
+    /// One near-perfect record must not swamp the rest before the sample count
+    /// has had a chance to catch up with it.
+    ///
+    /// Regression: the cap used to be 3x an equal share, which for three sources
+    /// is 1.0 and can never bind — a source with MAE 0 walked off with 99.3% of
+    /// the weight. The earlier version of this test asserted `<= 1.0` and passed
+    /// vacuously.
+    func testWeightsAreClampedSoOneLuckySourceCannotDominate() {
+        let t = table(with: [.ecmwf: 0, .gfs: 30, .icon: 30], samples: SkillTable.minSamples)
+        let w = t.weights(for: .temp, among: [.ecmwf, .gfs, .icon])!
+
+        let cap = SkillTable.weightCapMultiple / 3.0        // 0.667, and it must bind
+        XCTAssertEqual(w[.ecmwf]!, cap, accuracy: 0.001, "a perfect record is capped, not unbounded")
+        XCTAssertEqual(w[.gfs]!, (1 - cap) / 2, accuracy: 0.001, "the excess spills to the others")
+        XCTAssertEqual(w[.icon]!, (1 - cap) / 2, accuracy: 0.001)
+        XCTAssertEqual(w.values.reduce(0, +), 1, accuracy: 0.001)
+    }
+
+    /// Water-filling, not a single capped pass: the spill must not push a
+    /// previously-uncapped source over the cap.
+    func testCappingSpillsRepeatedlyUntilNobodyIsOverTheCap() {
+        let t = table(with: [.ecmwf: 0, .gfs: 0, .icon: 40, .metno: 40, .gem: 40],
+                      samples: SkillTable.minSamples)
+        let sources: [WeatherSource] = [.ecmwf, .gfs, .icon, .metno, .gem]
+        let w = t.weights(for: .temp, among: sources)!
+        let cap = SkillTable.weightCapMultiple / Double(sources.count)   // 0.4
+        for s in sources {
+            XCTAssertLessThanOrEqual(w[s]!, cap + 0.001, "\(s.short) is over the cap")
+            XCTAssertGreaterThan(w[s]!, 0, "nobody is zeroed out")
+        }
+        XCTAssertEqual(w.values.reduce(0, +), 1, accuracy: 0.001)
+    }
+
+    /// Equal skill must produce equal weights — no drift from the capping loop.
+    func testIdenticalSkillGivesUniformWeights() {
+        let t = table(with: [.ecmwf: 2, .gfs: 2, .icon: 2], samples: SkillTable.minSamples)
+        let w = t.weights(for: .temp, among: [.ecmwf, .gfs, .icon])!
+        for v in w.values { XCTAssertEqual(v, 1.0 / 3, accuracy: 0.001) }
+    }
+
+    // MARK: The merge
+
+    func testWeightedTrimmedMeanFallsBackToTheOldBehaviourWithoutWeights() {
+        let pairs: [(source: WeatherSource, value: Double)] =
+            [(.ecmwf, 20), (.gfs, 21), (.icon, 40)]
+        // Drops 20 and 40, keeps 21 — exactly the existing trimmed mean.
+        XCTAssertEqual(weightedTrimmedMean(pairs, weights: nil), 21, accuracy: 0.001)
+    }
+
+    func testWeightingPullsTheConsensusTowardTheAccurateSource() {
+        let pairs: [(source: WeatherSource, value: Double)] =
+            [(.ecmwf, 20), (.gfs, 24), (.icon, 28), (.metno, 40), (.gem, 10)]
+        // gem (10) and metno (40) are trimmed; ecmwf, gfs, icon survive.
+        let unweighted = weightedTrimmedMean(pairs, weights: nil)
+        XCTAssertEqual(unweighted, 24, accuracy: 0.001)
+
+        let weighted = weightedTrimmedMean(pairs, weights: [.ecmwf: 0.8, .gfs: 0.1, .icon: 0.1])
+        XCTAssertLessThan(weighted, unweighted, "trusting ecmwf pulls it toward 20")
+        XCTAssertEqual(weighted, 20 * 0.8 + 24 * 0.1 + 28 * 0.1, accuracy: 0.001)
+    }
+
+    /// A trimmed-out source's weight must not silently vanish into the divisor.
+    func testWeightsRenormaliseOverTheSurvivorsOnly() {
+        let pairs: [(source: WeatherSource, value: Double)] =
+            [(.ecmwf, 20), (.gfs, 22), (.icon, 30)]
+        // ecmwf and icon are trimmed; only gfs survives, so the answer is gfs.
+        XCTAssertEqual(weightedTrimmedMean(pairs, weights: [.ecmwf: 0.9, .gfs: 0.05, .icon: 0.05]),
+                       22, accuracy: 0.001)
+    }
+
+    func testTwoSourcesAreAveragedNotTrimmedAway() {
+        let pairs: [(source: WeatherSource, value: Double)] = [(.ecmwf, 20), (.gfs, 24)]
+        XCTAssertEqual(weightedTrimmedMean(pairs, weights: nil), 22, accuracy: 0.001)
+    }
+}
+
+// MARK: - Skill weighting reaches the consensus
+final class SkillWeightedConsensusTests: XCTestCase {
+
+    private let t0 = Date(timeIntervalSince1970: 1_783_000_000)
+
+    private func hourly(_ times: [TimeInterval], temp: Double, wind: Double) -> [HourlyReading] {
+        times.map { HourlyReading(time: t0.addingTimeInterval($0), temperature: temp,
+                                  rainProbability: 10, rainAmount: 0, windSpeed: wind,
+                                  condition: .clearSky, uvIndex: 3) }
+    }
+
+    /// With no ledger, the merge is exactly what it always was.
+    func testEmptyWeightsLeaveTheConsensusUnchanged() {
+        let readings = [reading(.ecmwf, temp: 20), reading(.gfs, temp: 21), reading(.icon, temp: 40)]
+        let plain = ConsensusCalculator().calculate(from: readings)
+        let weighted = ConsensusCalculator().calculate(from: readings, skillWeights: [:])
+        XCTAssertEqual(plain.temperature, weighted.temperature, accuracy: 0.001)
+        XCTAssertEqual(weighted.temperature, 21, accuracy: 0.001)
+    }
+
+    func testSkillWeightsMoveTheConsensusTemperature() {
+        let readings = [reading(.ecmwf, temp: 20), reading(.gfs, temp: 24), reading(.icon, temp: 28),
+                        reading(.metno, temp: 40), reading(.gem, temp: 10)]
+        let plain = ConsensusCalculator().calculate(from: readings)
+        XCTAssertEqual(plain.temperature, 24, accuracy: 0.001)
+
+        let trusted: [WeatherSource: Double] = [.ecmwf: 0.6, .gfs: 0.2, .icon: 0.2]
+        let weighted = ConsensusCalculator().calculate(from: readings, skillWeights: [.temp: trusted])
+        XCTAssertLessThan(weighted.temperature, plain.temperature)
+        XCTAssertEqual(weighted.temperature, 20 * 0.6 + 24 * 0.2 + 28 * 0.2, accuracy: 0.001)
+    }
+
+    /// A source must never be scored against the observation from the very
+    /// refresh that filed it — that would be a free perfect record for
+    /// "predicting" the present. The one-hour minimum horizon is what enforces it.
+    func testASourceCannotBeScoredAgainstTheRefreshThatFiledIt() {
+        var r = reading(.ecmwf, temp: 20)
+        r.hourlyForecast = hourly([0, 3600], temp: 20, wind: 10)
+        let filed = SkillTable.forecasts(from: [r], now: t0)
+
+        XCTAssertFalse(filed.isEmpty, "it did file something for later")
+        XCTAssertTrue(filed.allSatisfy { $0.targetTime >= t0.addingTimeInterval(3600) - 1 },
+                      "nothing is filed for the current hour")
+
+        var table = SkillTable()
+        table.record(filed, now: t0)
+        XCTAssertEqual(table.score(observed: [.temp: 99], at: t0), 0,
+                       "the present cannot score a forecast made for the future")
+    }
+
+    /// BOM makes no forecast, so it contributes no rows, so it can never be
+    /// scored against its own thermometer.
+    func testTheObservationSourceContributesNoScorableRows() {
+        var bom = reading(.bom, temp: 19, rain: nil, uv: nil)
+        bom.hourlyForecast = hourly([3600], temp: 19, wind: 8)
+        XCTAssertTrue(SkillTable.forecasts(from: [bom], now: t0).isEmpty)
+    }
+}

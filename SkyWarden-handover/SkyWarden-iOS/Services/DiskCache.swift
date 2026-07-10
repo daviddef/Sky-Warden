@@ -26,13 +26,24 @@ enum DiskCache {
         let value: T
     }
 
-    private static let directory: URL? = {
-        guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-        else { return nil }
-        let dir = base.appendingPathComponent("SkyWardenCache", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
+    /// Where a file lives, and therefore whether iOS may delete it.
+    ///
+    /// Cached API responses belong in Caches — evictable, and always refetchable.
+    /// The forecast-skill ledger does not: it takes days of use to accumulate and
+    /// no server can hand it back, so it goes in Application Support.
+    enum Store {
+        case cache, durable
+
+        var directory: URL? {
+            let search: FileManager.SearchPathDirectory = self == .cache ? .cachesDirectory : .applicationSupportDirectory
+            guard let base = FileManager.default.urls(for: search, in: .userDomainMask).first else { return nil }
+            let dir = base.appendingPathComponent("SkyWarden\(self == .cache ? "Cache" : "Data")", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
+    }
+
+    private static let directory: URL? = Store.cache.directory
 
     /// Rounds a coordinate to a grid so nearby requests share one cache entry.
     /// 0.05° ≈ 5.5 km — well inside the distance over which a tide or a 30-year
@@ -77,6 +88,31 @@ enum DiskCache {
         let fresh = try await fetch()
         save(fresh, key: key)
         return fresh
+    }
+
+    // MARK: - Durable store (no TTL; survives cache eviction)
+
+    static func loadDurable<T: Codable>(_ type: T.Type, key: String) -> T? {
+        guard let url = Store.durable.directory?.appendingPathComponent("\(key).json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    static func saveDurable<T: Codable>(_ value: T, key: String) {
+        guard let url = Store.durable.directory?.appendingPathComponent("\(key).json"),
+              let data = try? JSONEncoder().encode(value) else { return }
+        try? data.write(to: url, options: .atomic)
+        // Skill data is derived, but only over days of real use — don't ship it
+        // to iCloud, and don't let it be purged as "recreatable".
+        var resources = URLResourceValues()
+        resources.isExcludedFromBackup = false
+        var mutable = url
+        try? mutable.setResourceValues(resources)
+    }
+
+    static func clearDurable() {
+        guard let dir = Store.durable.directory else { return }
+        try? FileManager.default.removeItem(at: dir)
     }
 
     /// Testing/support: wipe everything.

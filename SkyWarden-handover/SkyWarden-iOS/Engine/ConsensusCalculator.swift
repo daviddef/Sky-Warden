@@ -7,7 +7,16 @@ struct ConsensusCalculator {
 
     private let engine = DisagreementEngine()
 
-    func calculate(from readings: [WeatherReading]) -> ConsensusWeather {
+    /// `skillWeights` come from the forecast ledger — how close each source has
+    /// actually been at this location. Empty until a source has enough scored
+    /// samples, in which case this is exactly the old unweighted merge.
+    ///
+    /// Only temperature is weighted. Wind's estimator is a median, and swapping
+    /// it for a weighted mean the moment the ledger fills up would be a silent
+    /// change of statistic, not a refinement. Wind skill is recorded and shown;
+    /// using it is a separate decision.
+    func calculate(from readings: [WeatherReading],
+                   skillWeights: [SkillMetric: [WeatherSource: Double]] = [:]) -> ConsensusWeather {
         precondition(!readings.isEmpty)
 
         let (disagreements, confidence, worst) = engine.analyse(readings)
@@ -20,7 +29,8 @@ struct ConsensusCalculator {
         let rains     = readings.compactMap(\.rainProbability)
         let uvValues  = readings.compactMap(\.uvIndex)
 
-        let consensusTemp  = trimmedMean(temps)
+        let tempPairs = readings.map { (source: $0.source, value: $0.temperature) }
+        let consensusTemp = weightedTrimmedMean(tempPairs, weights: skillWeights[.temp])
         let consensusRain  = mean(rains)
         let consensusWind  = median(winds)
         let consensusHumid = mean(humidity)

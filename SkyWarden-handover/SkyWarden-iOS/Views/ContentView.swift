@@ -115,7 +115,7 @@ struct ContentView: View {
                      region: locationManager.region,
                      countryCode: locationManager.countryCode)
         case .sources:
-            SourcesView(consensus: consensus)
+            SourcesView(consensus: consensus, location: location)
         }
     }
 

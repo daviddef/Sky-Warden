@@ -63,7 +63,12 @@ final class WeatherAggregator: ObservableObject {
             return
         }
 
-        let consensus = calculator.calculate(from: readings)
+        // Score whatever these sources predicted hours ago against BOM's
+        // thermometer, file what they're predicting now, and let the ledger
+        // weight the merge once it has enough samples to have earned an opinion.
+        SkillLedger.shared.update(with: readings, location: location)
+        let weights = SkillLedger.shared.allWeights(among: readings.map(\.source), location: location)
+        let consensus = calculator.calculate(from: readings, skillWeights: weights)
 
         lastFetch    = Date()
         lastLocation = location

@@ -1,6 +1,7 @@
 // SkyWarden — Week + Sources tabs
 
 import SwiftUI
+import CoreLocation
 
 // MARK: - Week View
 struct WeekView: View {
@@ -80,6 +81,7 @@ private struct DailyRow: View {
 // MARK: - Sources View (transparency: per-ring comfort bars + source breakdown)
 struct SourcesView: View {
     let consensus: ConsensusWeather
+    var location: CLLocation? = nil
     @State private var expanded: ComfortMetric?
 
     private var comfort: ComfortData { ComfortData(consensus: consensus) }
@@ -95,11 +97,64 @@ struct SourcesView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 8) {
                 confidenceCard
+                if let location { trackRecordCard(location) }
                 ForEach(comfort.rings) { ringRow($0) }
                 PeoplesWeather()
             }
             .padding(16)
         }
+    }
+
+    /// The scoreboard. Every other app asks you to take its forecast on faith;
+    /// this shows how far each source has actually been from the thermometer,
+    /// here, and admits when it doesn't know yet.
+    private func trackRecordCard(_ location: CLLocation) -> some View {
+        let table = SkillLedger.shared.table(for: location)
+        let sources = WeatherSource.allCases.filter { $0.kind == .forecast }
+        let weighted = table.weights(for: .temp, among: consensus.sources.filter { $0.kind == .forecast }) != nil
+        // Only rank by accuracy once we're willing to state it. Sorting by an
+        // error we're simultaneously showing as "—" would leak a verdict this
+        // card is explicitly declining to give.
+        let ranked = weighted
+            ? sources.sorted { (table.mae($0, .temp) ?? .infinity) < (table.mae($1, .temp) ?? .infinity) }
+            : sources
+
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("🎯 TRACK RECORD HERE").font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
+                Spacer()
+                Text(weighted ? "weighting the consensus" : "still learning")
+                    .font(.system(size: 9)).foregroundColor(weighted ? Comfort.good : Sky.muted)
+            }
+
+            ForEach(ranked, id: \.self) { s in
+                let n = table.samples(s, .temp)
+                HStack(spacing: 8) {
+                    Circle().fill(Color(hex: s.colorHex)).frame(width: 5, height: 5)
+                    Text(s.short).font(.system(size: 11)).foregroundColor(Sky.text)
+                        .frame(width: 40, alignment: .leading)
+                    Spacer()
+                    if let e = table.mae(s, .temp), n >= SkillTable.minSamples {
+                        Text("±\(String(format: "%.1f", Units.tempDelta(e)))\(Units.temperature.label)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(Sky.white)
+                        Text("\(n) checks").font(.system(size: 9)).foregroundColor(Sky.muted)
+                            .frame(width: 60, alignment: .trailing)
+                    } else {
+                        Text("—").font(.system(size: 11)).foregroundColor(Sky.muted)
+                        Text("\(n)/\(SkillTable.minSamples)").font(.system(size: 9)).foregroundColor(Sky.muted)
+                            .frame(width: 60, alignment: .trailing)
+                    }
+                }
+            }
+
+            Text(WeatherSource.allCases.contains(where: { $0.kind == .observation })
+                 ? "Average miss against BOM's thermometer, for forecasts made 1–6 hours ahead. A source needs \(SkillTable.minSamples) checks before it can move the consensus."
+                 : "Needs a nearby observation station to score against.")
+                .font(.system(size: 9)).foregroundColor(Sky.muted).lineSpacing(2)
+        }
+        .padding(14)
+        .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private var confidenceCard: some View {
