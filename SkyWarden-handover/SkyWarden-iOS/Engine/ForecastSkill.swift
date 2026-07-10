@@ -254,12 +254,19 @@ func weightedTrimmedMean(_ pairs: [(source: WeatherSource, value: Double)],
     let sorted = pairs.sorted { $0.value < $1.value }
     let survivors = Array(sorted.dropFirst().dropLast())
 
-    guard let weights else {
+    guard let weights, !weights.isEmpty else {
         return survivors.map(\.value).reduce(0, +) / Double(survivors.count)
     }
-    let total = survivors.reduce(0.0) { $0 + (weights[$1.source] ?? 0) }
+    // A source absent from `weights` — the observation, which files no forecasts,
+    // or a model added yesterday — carries the MEAN of the supplied weights, not
+    // zero. Zeroing it would silently drop BOM's thermometer out of the current
+    // temperature the moment the ledger warmed up.
+    let meanWeight = weights.values.reduce(0, +) / Double(weights.count)
+    func weight(_ s: WeatherSource) -> Double { weights[s] ?? meanWeight }
+
+    let total = survivors.reduce(0.0) { $0 + weight($1.source) }
     guard total > 0 else {
         return survivors.map(\.value).reduce(0, +) / Double(survivors.count)
     }
-    return survivors.reduce(0.0) { $0 + $1.value * (weights[$1.source] ?? 0) } / total
+    return survivors.reduce(0.0) { $0 + $1.value * weight($1.source) } / total
 }

@@ -67,11 +67,17 @@ final class SkillLedger {
     }
 
     /// Everything the consensus needs, in one lookup.
+    ///
+    /// Only forecast sources are ranked. Passing the observation in would poison
+    /// the guard — BOM files no forecasts, so it can never reach `minSamples`,
+    /// and `weights` would return nil forever. The accuracy loop would run,
+    /// accumulate, display a scoreboard, and never once move the consensus.
     func allWeights(among sources: [WeatherSource], location: CLLocation) -> [SkillMetric: [WeatherSource: Double]] {
+        let ranked = sources.filter { $0.kind == .forecast }
         let t = table(for: location)
         var out: [SkillMetric: [WeatherSource: Double]] = [:]
         for m in SkillMetric.allCases {
-            if let w = t.weights(for: m, among: sources) { out[m] = w }
+            if let w = t.weights(for: m, among: ranked) { out[m] = w }
         }
         return out
     }

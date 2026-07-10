@@ -867,3 +867,53 @@ final class SkillWeightedConsensusTests: XCTestCase {
         XCTAssertTrue(SkillTable.forecasts(from: [bom], now: t0).isEmpty)
     }
 }
+
+// MARK: - The moat must actually engage
+final class SkillEngagementTests: XCTestCase {
+
+    private let t0 = Date(timeIntervalSince1970: 1_783_000_000)
+
+    private func trained(_ sources: [WeatherSource]) -> SkillTable {
+        var t = SkillTable()
+        for s in sources {
+            for i in 0..<SkillTable.minSamples {
+                let target = t0.addingTimeInterval(Double(i + 1) * 3600)
+                t.record([PendingForecast(source: s.rawValue, metric: .temp,
+                                          targetTime: target, predicted: 21)], now: t0)
+                t.score(observed: [.temp: 20], at: target)
+            }
+        }
+        return t
+    }
+
+    /// BOM is an observation: it files no forecasts, so it can never reach
+    /// minSamples. Asking for weights over a list that includes it would return
+    /// nil forever, and the accuracy loop would silently never engage.
+    func testObservationSourceMustNotBlockWeighting() {
+        let t = trained([.ecmwf, .gfs, .icon])
+        XCTAssertEqual(t.samples(.bom, .temp), 0, "BOM files nothing, by design")
+
+        XCTAssertNil(t.weights(for: .temp, among: [.ecmwf, .gfs, .icon, .bom]),
+                     "including the observation poisons the guard")
+        XCTAssertNotNil(t.weights(for: .temp, among: [.ecmwf, .gfs, .icon]),
+                        "forecast sources alone have earned an opinion")
+    }
+
+    /// A source with no skill record (the observation, or a newly-added model)
+    /// must keep a fair share of the merge rather than being silently zeroed.
+    func testASourceWithoutAWeightKeepsAnAverageShare() {
+        let pairs: [(source: WeatherSource, value: Double)] =
+            [(.ecmwf, 20), (.gfs, 22), (.bom, 24), (.icon, 40), (.gem, 10)]
+        // gem and icon are trimmed; ecmwf, gfs and bom survive.
+        let weights: [WeatherSource: Double] = [.ecmwf: 0.5, .gfs: 0.3, .icon: 0.2]
+
+        let result = weightedTrimmedMean(pairs, weights: weights)
+        XCTAssertGreaterThan(result, 20, "bom is not zeroed out")
+        XCTAssertLessThan(result, 24)
+
+        // bom takes the mean of the supplied weights (1/3), so:
+        let meanW = (0.5 + 0.3 + 0.2) / 3
+        let expected = (20 * 0.5 + 22 * 0.3 + 24 * meanW) / (0.5 + 0.3 + meanW)
+        XCTAssertEqual(result, expected, accuracy: 0.001)
+    }
+}
