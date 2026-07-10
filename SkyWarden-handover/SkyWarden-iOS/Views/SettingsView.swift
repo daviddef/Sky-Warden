@@ -33,15 +33,14 @@ struct SettingsView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, 2)
 
-                            if dialStyle == DialStyle.arc.rawValue {
-                                Divider().background(Sky.surface).padding(.vertical, 4)
-                                picker("Arc fill", selection: $arcFillMode,
-                                       options: ArcFillMode.allCases.map { ($0.rawValue, $0.title) })
-                                Text(ArcFillMode(rawValue: arcFillMode)?.blurb ?? "")
-                                    .font(.system(size: 10)).foregroundColor(Sky.muted)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.top, 2)
-                            }
+                            // Applies to both dial styles.
+                            Divider().background(Sky.surface).padding(.vertical, 4)
+                            picker("Fill", selection: $arcFillMode,
+                                   options: ArcFillMode.allCases.map { ($0.rawValue, $0.title) })
+                            Text(ArcFillMode(rawValue: arcFillMode)?.blurb ?? "")
+                                .font(.system(size: 10)).foregroundColor(Sky.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 2)
 
                             Divider().background(Sky.surface).padding(.vertical, 4)
                             toggle("Show today's range", $showRange)

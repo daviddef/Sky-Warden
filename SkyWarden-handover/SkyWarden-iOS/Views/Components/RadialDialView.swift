@@ -27,12 +27,24 @@ struct RadialDialView: View {
     let confidence: Double
     @Binding var selected: ComfortMetric?
 
-    @AppStorage(DisplayKey.showRange) private var showRange = true
+    @AppStorage(DisplayKey.showRange)   private var showRange = true
+    @AppStorage(DisplayKey.arcFillMode) private var fillModeRaw = ArcFillMode.comfort.rawValue
+    private var fillMode: ArcFillMode { ArcFillMode(rawValue: fillModeRaw) ?? .comfort }
 
     private func shownRange(_ r: RingReading) -> (Double, Double)? {
         guard showRange, let mm = r.minMax,
               r.metric.format(mm.0) != r.metric.format(mm.1) else { return nil }
         return mm
+    }
+
+    // Both dials share the fill-mode toggle: comfort → position by comfort score,
+    // value/both → position by the raw reading on its own 0→max scale.
+    private func comfortFraction(_ score: Double) -> Double { (1 - max(-1, min(1, score))) / 2 }
+    private func fraction(_ m: ComfortMetric, value: Double) -> Double {
+        switch fillMode {
+        case .comfort:      comfortFraction(m.score(value))
+        case .value, .both: m.normalized(value)
+        }
     }
 
     private let W: CGFloat = 320
@@ -47,9 +59,11 @@ struct RadialDialView: View {
     private var orbR: CGFloat { radius(4) - 17 }
 
     /// The arc dial spends 90° on a full-scale reading. A ring has the whole
-    /// circle, so spread it wider — the same score, more legible.
+    /// circle, so spread it wider — the same reading, more legible.
     private let spread: Double = 1.55
-    private func angle(_ score: Double) -> Double { Comfort.angle(score) * spread }
+    /// Fraction 0 (good/low) → far anticlockwise; 0.5 → top; 1 (poor/high) → far
+    /// clockwise. Mirrors the arc's left→right, just wrapped around more of the ring.
+    private func ang(_ fraction: Double) -> Double { (fraction - 0.5) * 2 * 90 * spread }
 
     var body: some View {
         ZStack {
@@ -82,7 +96,8 @@ struct RadialDialView: View {
     private func drawRing(_ ctx: GraphicsContext, reading r: RingReading,
                           radius rad: CGFloat, isSelected: Bool) {
         let metric = r.metric
-        let end = angle(r.score)
+        let startAngle = ang(0)                      // the good / low end
+        let end = ang(fraction(metric, value: r.value))
         let color = Comfort.comfortColor(r.score)
         let lw: CGFloat = isSelected ? 9 : 6.5
 
@@ -91,10 +106,9 @@ struct RadialDialView: View {
                    style: StrokeStyle(lineWidth: lw))
 
         // Today's forecast low→high: a faint band for the span, plus a bright
-        // core and end ticks so it reads clearly. The numbers appear in the
-        // centre when the ring is tapped.
+        // core and end ticks. Numbers appear in the centre when the ring is tapped.
         if let mm = shownRange(r) {
-            let a = angle(metric.score(mm.0)), b = angle(metric.score(mm.1))
+            let a = ang(fraction(metric, value: mm.0)), b = ang(fraction(metric, value: mm.1))
             ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.muted.opacity(0.13)),
                        style: StrokeStyle(lineWidth: lw + 4, lineCap: .round))
             ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.white.opacity(0.45)),
@@ -105,27 +119,33 @@ struct RadialDialView: View {
             }
         }
 
-        // Where each source sits — neutral ticks, so a wide scatter reads as
-        // spread rather than as nine competing colours.
+        // Where each source sits — neutral ticks; a wide scatter reads as spread.
         for s in r.perSource {
-            let a = angle(metric.score(s.value))
-            ctx.stroke(tick(a, rad, lw), with: .color(Sky.muted.opacity(0.5)),
-                       style: StrokeStyle(lineWidth: 1))
+            ctx.stroke(tick(ang(fraction(metric, value: s.value)), rad, lw),
+                       with: .color(Sky.muted.opacity(0.5)), style: StrokeStyle(lineWidth: 1))
+        }
+
+        // .both: mark where comfort crosses, so magnitude and comfort read apart.
+        if fillMode == .both {
+            for t in comfortThresholds(metric) {
+                ctx.stroke(tick(ang(metric.normalized(t)), rad, lw + 3),
+                           with: .color(Sky.white.opacity(0.5)), style: StrokeStyle(lineWidth: 1.5))
+            }
         }
 
         // Disagreement: a dashed span across the sources' full width.
         if r.hasFlag {
-            let scores = r.perSource.map { metric.score($0.value) }
-            if let hi = scores.max(), let lo = scores.min() {
-                ctx.stroke(arc(angle(hi), angle(lo), rad + lw / 2 + 4),
+            let fracs = r.perSource.map { fraction(metric, value: $0.value) }
+            if let hi = fracs.max(), let lo = fracs.min() {
+                ctx.stroke(arc(ang(lo), ang(hi), rad + lw / 2 + 4),
                            with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.85)),
                            style: StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
             }
         }
 
-        // The reading: a sweep out of borderline.
-        if abs(end) > 1.5 {
-            ctx.stroke(arc(0, end, rad), with: .color(color),
+        // The reading: a sweep from the good/low end to the reading.
+        if abs(end - startAngle) > 1.5 {
+            ctx.stroke(arc(startAngle, end, rad), with: .color(color),
                        style: StrokeStyle(lineWidth: lw, lineCap: .round))
         }
 
@@ -147,16 +167,35 @@ struct RadialDialView: View {
     /// 12 o'clock is "borderline". Marking it makes every sweep's direction
     /// meaningful instead of decorative.
     private func drawBorderlineMark(_ ctx: GraphicsContext) {
-        var line = Path()
-        line.move(to: polar(0, orbR + 14))
-        line.addLine(to: polar(0, baseR + 9))
-        ctx.stroke(line, with: .color(Sky.white.opacity(0.13)),
-                   style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
-
-        ctx.draw(Text("good").font(.system(size: 8.5)).foregroundColor(Comfort.good.opacity(0.6)),
+        // In comfort mode, 12 o'clock is the borderline (score 0); mark it. In
+        // value mode the top is just the mid-scale, so no mark there.
+        if fillMode == .comfort {
+            var line = Path()
+            line.move(to: polar(0, orbR + 14))
+            line.addLine(to: polar(0, baseR + 9))
+            ctx.stroke(line, with: .color(Sky.white.opacity(0.13)),
+                       style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
+        }
+        let (lo, hi) = fillMode == .comfort ? ("good", "poor") : ("low", "high")
+        ctx.draw(Text(lo).font(.system(size: 8.5)).foregroundColor(Comfort.good.opacity(0.6)),
                  at: CGPoint(x: 2, y: center.y + baseR - 24), anchor: .leading)
-        ctx.draw(Text("poor").font(.system(size: 8.5)).foregroundColor(Comfort.poor.opacity(0.6)),
+        ctx.draw(Text(hi).font(.system(size: 8.5)).foregroundColor(Comfort.poor.opacity(0.6)),
                  at: CGPoint(x: W - 2, y: center.y + baseR - 24), anchor: .trailing)
+    }
+
+    /// Values in a metric's display range where its comfort score crosses zero.
+    private func comfortThresholds(_ metric: ComfortMetric) -> [Double] {
+        let r = metric.displayRange
+        let steps = 180
+        var out: [Double] = []
+        var prev = metric.score(r.lowerBound)
+        for i in 1...steps {
+            let v = r.lowerBound + (r.upperBound - r.lowerBound) * Double(i) / Double(steps)
+            let s = metric.score(v)
+            if (prev < 0) != (s < 0) { out.append(v) }
+            prev = s
+        }
+        return out
     }
 
     // MARK: - Verdict orb
@@ -259,7 +298,7 @@ struct RadialDialView: View {
     private func hit(at p: CGPoint) -> ComfortMetric? {
         for (i, metric) in ComfortMetric.allCases.enumerated() {
             guard let r = data.ring(metric) else { continue }
-            let tip = polar(angle(r.score), radius(i))
+            let tip = polar(ang(fraction(metric, value: r.value)), radius(i))
             if hypot(p.x - tip.x, p.y - tip.y) <= 14 { return selected == metric ? nil : metric }
         }
         let dist = hypot(p.x - center.x, p.y - center.y)
