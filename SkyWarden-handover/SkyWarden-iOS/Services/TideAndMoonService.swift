@@ -17,24 +17,27 @@ struct WorldTidesService {
     }
 
     func fetch(location: CLLocation, days: Int = 2) async throws -> TideDay {
-        guard !apiKey.isEmpty else { throw ServiceError.missingData("WORLDTIDES_API_KEY") }
+        guard WeatherProxy.isEnabled || !apiKey.isEmpty else {
+            throw ServiceError.missingData("WORLDTIDES_API_KEY")
+        }
 
         let lat = location.coordinate.latitude
         let lon = location.coordinate.longitude
 
-        var components = URLComponents(string: baseURL)!
-        components.queryItems = [
+        let items: [URLQueryItem] = [
             .init(name: "heights",  value: ""),
             .init(name: "extremes", value: ""),
             .init(name: "lat",      value: "\(lat)"),
             .init(name: "lon",      value: "\(lon)"),
             .init(name: "days",     value: "\(days)"),
-            .init(name: "key",      value: apiKey),
             .init(name: "datum",    value: "LAT"),  // Lowest Astronomical Tide
         ]
 
-        guard let url = components.url else { throw ServiceError.invalidURL }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let request = WeatherProxy.request(source: "worldtides", directBase: baseURL,
+                                                 items: items, keyParam: "key", keyValue: apiKey) else {
+            throw ServiceError.invalidURL
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ServiceError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }

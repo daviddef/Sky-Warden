@@ -87,5 +87,11 @@
     <string>$(WEATHERKIT_SERVICE_ID)</string>
     <key>WEATHERKIT_TEAM_ID</key>
     <string>$(WEATHERKIT_TEAM_ID)</string>
+
+    <!-- ── Central proxy (Supabase) ────────────────────────────────── -->
+    <key>PROXY_BASE_URL</key>
+    <string>$(PROXY_BASE_URL)</string>
+    <key>PROXY_APP_TOKEN</key>
+    <string>$(PROXY_APP_TOKEN)</string>
 </dict>
 </plist>

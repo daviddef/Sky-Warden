@@ -17,23 +17,27 @@ struct OpenWeatherService {
 
     // MARK: - Fetch
     func fetch(location: CLLocation) async throws -> WeatherReading {
-        guard !apiKey.isEmpty else { throw ServiceError.missingData("OPENWEATHER_API_KEY") }
+        // In proxy mode the key lives server-side, so the client doesn't need it.
+        guard WeatherProxy.isEnabled || !apiKey.isEmpty else {
+            throw ServiceError.missingData("OPENWEATHER_API_KEY")
+        }
 
         let lat = location.coordinate.latitude
         let lon = location.coordinate.longitude
 
-        var components = URLComponents(string: baseURL)!
-        components.queryItems = [
+        let items: [URLQueryItem] = [
             .init(name: "lat",     value: "\(lat)"),
             .init(name: "lon",     value: "\(lon)"),
-            .init(name: "appid",   value: apiKey),
             .init(name: "units",   value: "metric"),
             .init(name: "exclude", value: "minutely,alerts"),
         ]
 
-        guard let url = components.url else { throw ServiceError.invalidURL }
+        guard let request = WeatherProxy.request(source: "openweather", directBase: baseURL,
+                                                 items: items, keyParam: "appid", keyValue: apiKey) else {
+            throw ServiceError.invalidURL
+        }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ServiceError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }

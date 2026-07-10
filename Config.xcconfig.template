@@ -15,3 +15,8 @@ GNEWS_API_KEY =
 WEATHERKIT_KEY_ID =
 WEATHERKIT_SERVICE_ID =
 WEATHERKIT_TEAM_ID =
+
+// Central proxy (Supabase). Once deployed (see supabase/README.md), set both and
+// remove the provider keys above. Blank = fetch providers directly.
+PROXY_BASE_URL =
+PROXY_APP_TOKEN =

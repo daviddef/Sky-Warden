@@ -14,8 +14,7 @@ struct OpenMeteoService {
         let lat = location.coordinate.latitude
         let lon = location.coordinate.longitude
 
-        var components = URLComponents(string: baseURL)!
-        components.queryItems = [
+        let items: [URLQueryItem] = [
             .init(name: "latitude",          value: "\(lat)"),
             .init(name: "longitude",         value: "\(lon)"),
             .init(name: "current",           value: currentFields),
@@ -28,9 +27,11 @@ struct OpenMeteoService {
             .init(name: "precipitation_unit",value: "mm"),
         ]
 
-        guard let url = components.url else { throw ServiceError.invalidURL }
+        guard let request = WeatherProxy.request(source: "openmeteo", directBase: baseURL, items: items) else {
+            throw ServiceError.invalidURL
+        }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ServiceError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }

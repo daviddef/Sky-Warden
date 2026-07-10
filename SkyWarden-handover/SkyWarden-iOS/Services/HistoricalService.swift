@@ -21,8 +21,7 @@ struct HistoricalService {
         let month = cal.component(.month, from: now)
         let day = cal.component(.day, from: now)
 
-        var comps = URLComponents(string: baseURL)!
-        comps.queryItems = [
+        let items: [URLQueryItem] = [
             .init(name: "latitude",  value: "\(location.coordinate.latitude)"),
             .init(name: "longitude", value: "\(location.coordinate.longitude)"),
             .init(name: "start_date", value: "1991-01-01"),
@@ -30,9 +29,11 @@ struct HistoricalService {
             .init(name: "daily",      value: "temperature_2m_max"),
             .init(name: "timezone",   value: "auto"),
         ]
-        guard let url = comps.url else { throw ServiceError.invalidURL }
+        guard let request = WeatherProxy.request(source: "archive", directBase: baseURL, items: items) else {
+            throw ServiceError.invalidURL
+        }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ServiceError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
         }

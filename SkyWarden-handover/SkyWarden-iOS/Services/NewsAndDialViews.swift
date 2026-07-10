@@ -41,23 +41,22 @@ struct WeatherNewsService {
     private let newsAPIBase = "https://gnews.io/api/v4/search"
 
     func fetchLocalNews(location: CLLocation, region: String = "SE Queensland") async -> [WeatherNewsItem] {
-        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "GNEWS_API_KEY") as? String,
-              !apiKey.isEmpty else {
-            // Fallback: BOM warnings RSS (no key needed)
+        let apiKey = (Bundle.main.object(forInfoDictionaryKey: "GNEWS_API_KEY") as? String) ?? ""
+        // Need either the proxy (key server-side) or a local key; else fall back to BOM RSS.
+        guard WeatherProxy.isEnabled || !apiKey.isEmpty else {
             return await fetchBOMWarnings()
         }
 
-        var components = URLComponents(string: newsAPIBase)!
-        components.queryItems = [
+        let items: [URLQueryItem] = [
             .init(name: "q",        value: "weather \(region) forecast"),
             .init(name: "lang",     value: "en"),
             .init(name: "country",  value: "au"),
             .init(name: "max",      value: "5"),
-            .init(name: "apikey",   value: apiKey),
         ]
 
-        guard let url = components.url else { return [] }
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
+        guard let request = WeatherProxy.request(source: "gnews", directBase: newsAPIBase,
+                                                 items: items, keyParam: "apikey", keyValue: apiKey) else { return [] }
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
               let raw = try? JSONDecoder().decode(GNewsResponse.self, from: data)
         else { return [] }
 
