@@ -290,26 +290,36 @@ func ratingText(for d: ComfortData, season: String, place: String) -> RatingText
     guard let worst = d.rings.min(by: { $0.score < $1.score }) else {
         return RatingText(text: "Gathering conditions…", emoji: "🌤")
     }
-    let temp = d.ring(.temp)?.value ?? 0
-    let rain = Int((d.ring(.rain)?.value ?? 0).rounded())
+    // Optional, not `?? 0`: a missing temperature ring used to greet the user
+    // with "Cool day at 0° — pack a layer." Sentences that quote a number only
+    // appear when there is a number.
+    let temp = d.ring(.temp)?.value
+    let rain = d.ring(.rain)?.value
 
     if os >= 0.75 {
         return RatingText(text: "A perfect \(season)'s day in \(place) — comfortable and clear.", emoji: "😎")
     }
     if os >= 0.4 {
         switch worst.metric {
-        case .rain: return RatingText(text: "Decent but \(rain)% rain chance — keep an eye on the sky.", emoji: "🌦")
-        case .uv:   return RatingText(text: "Nice day but UV is \(worst.metric.comfortLabel(worst.value)) — sun protection essential.", emoji: "🧴")
-        case .temp where temp < 17:
-            return RatingText(text: "Cool day at \(Int(temp.rounded()))° — pack a layer.", emoji: "🧥")
-        default:    return RatingText(text: "Good conditions with a few things to watch.", emoji: "🙂")
+        case .rain:
+            guard let rain else { return RatingText(text: "Decent, but rain is the thing to watch.", emoji: "🌦") }
+            return RatingText(text: "Decent but \(Int(rain.rounded()))% rain chance — keep an eye on the sky.", emoji: "🌦")
+        case .uv:
+            return RatingText(text: "Nice day but UV is \(worst.metric.comfortLabel(worst.value)) — sun protection essential.", emoji: "🧴")
+        case .temp where (temp ?? .infinity) < 17:
+            return RatingText(text: "Cool day at \(Int(temp!.rounded()))° — pack a layer.", emoji: "🧥")
+        default:
+            return RatingText(text: "Good conditions with a few things to watch.", emoji: "🙂")
         }
     }
     switch worst.metric {
-    case .rain: return RatingText(text: "Rain likely (\(rain)%) — plan around the showers.", emoji: "🌧")
-    case .temp where temp > 35:
-        return RatingText(text: "Heatwave — \(Int(temp.rounded()))°. Limit outdoor activity midday.", emoji: "🔥")
-    default:    return RatingText(text: "Mixed conditions today. Check the detail tabs.", emoji: "😐")
+    case .rain:
+        guard let rain else { return RatingText(text: "Rain likely — plan around the showers.", emoji: "🌧") }
+        return RatingText(text: "Rain likely (\(Int(rain.rounded()))%) — plan around the showers.", emoji: "🌧")
+    case .temp where (temp ?? -.infinity) > 35:
+        return RatingText(text: "Heatwave — \(Int(temp!.rounded()))°. Limit outdoor activity midday.", emoji: "🔥")
+    default:
+        return RatingText(text: "Mixed conditions today. Check the detail tabs.", emoji: "😐")
     }
 }
 

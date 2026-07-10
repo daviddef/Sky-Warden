@@ -78,8 +78,11 @@ private struct EventCard: View {
         case .clear: (Sky.card, .clear, Sky.green)
         }
     }
+    /// An event past the forecast horizon has no forecast. `?? 0` used to turn
+    /// that absence into 0% rain, which rendered a confident ☀️ for a day nobody
+    /// has predicted yet.
     private var condEmoji: String {
-        let r = event.forecast?.rainProbability ?? 0
+        guard let r = event.forecast?.rainProbability else { return "❔" }
         return r > 50 ? "🌧" : r > 20 ? "⛅" : "☀️"
     }
 
@@ -102,6 +105,10 @@ private struct EventCard: View {
                 if let f = event.forecast {
                     Text(Units.tempString(f.tempMax)).font(.system(size: 13, weight: .semibold)).foregroundColor(Sky.white)
                     Text("\(Int(f.rainProbability.rounded()))%💧").font(.system(size: 11)).foregroundColor(Sky.rain)
+                } else {
+                    Text("no forecast\nyet")
+                        .font(.system(size: 9)).foregroundColor(Sky.muted)
+                        .multilineTextAlignment(.center)
                 }
             }
         }
