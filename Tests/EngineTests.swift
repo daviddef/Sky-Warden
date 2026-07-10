@@ -203,9 +203,23 @@ final class ConsensusCalculatorTests: XCTestCase {
         XCTAssertEqual(Set(WeatherSource.models.compactMap(\.openMeteoModel)).count, 6)
         XCTAssertNil(WeatherSource.bom.openMeteoModel)
         XCTAssertNil(WeatherSource.weatherKit.openMeteoModel)
-        // Every source needs a distinct colour so the dial's dots stay readable.
-        XCTAssertEqual(Set(WeatherSource.allCases.map(\.colorHex)).count, WeatherSource.allCases.count)
+        // Identity comes from the label, which must be unique.
         XCTAssertEqual(Set(WeatherSource.allCases.map(\.short)).count, WeatherSource.allCases.count)
+    }
+
+    /// Colour no longer identifies the source — nine hues cannot be told apart
+    /// under protanopia (best achievable ΔE 4.8, floor 8). It encodes the only
+    /// thing that changes how a number is read: forecast, or measurement.
+    func testSourceColourEncodesForecastVersusObservation() {
+        XCTAssertEqual(WeatherSource.bom.kind, .observation, "BOM reports what happened")
+        for s in WeatherSource.allCases where s != .bom {
+            XCTAssertEqual(s.kind, .forecast, "\(s.short) is a forecast")
+        }
+        // Exactly two colours, and they are not the nine-hue rainbow.
+        XCTAssertEqual(Set(WeatherSource.allCases.map(\.colorHex)).count, 2)
+        XCTAssertNotEqual(WeatherSource.bom.colorHex, WeatherSource.ecmwf.colorHex)
+        XCTAssertEqual(WeatherSource.gfs.colorHex, WeatherSource.ecmwf.colorHex,
+                       "two models are both just models")
     }
 
     /// Range grows with sample count, so it can't be the disagreement measure

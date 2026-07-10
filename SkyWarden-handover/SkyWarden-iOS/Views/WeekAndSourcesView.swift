@@ -139,6 +139,21 @@ struct SourcesView: View {
                     .opacity(active.contains(s) ? 1 : 0.32)
                 }
             }
+
+            // Colour says forecast or measurement; the label says which source.
+            HStack(spacing: 10) {
+                ForEach([WeatherSource.Kind.forecast, .observation], id: \.self) { kind in
+                    HStack(spacing: 4) {
+                        Circle().fill(Color(hex: kind == .forecast
+                                            ? WeatherSource.ecmwf.colorHex : WeatherSource.bom.colorHex))
+                            .frame(width: 5, height: 5)
+                        Text(kind == .forecast ? "forecast" : "observed")
+                            .font(.system(size: 8)).foregroundColor(Sky.muted)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.top, 2)
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 14))

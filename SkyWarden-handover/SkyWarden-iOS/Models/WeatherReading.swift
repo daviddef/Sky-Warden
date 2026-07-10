@@ -54,17 +54,29 @@ enum WeatherSource: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Forecast, or measurement of what is actually happening. This is the one
+    /// distinction that changes how you read a number: when BOM says 19° and the
+    /// models say 22°, BOM is not a dissenting opinion — it is the thermometer.
+    enum Kind: Hashable { case forecast, observation }
+
+    var kind: Kind { self == .bom ? .observation : .forecast }
+
+    /// Nine sources used to carry nine hues. They could not be told apart: a
+    /// search over OKLCH found the best achievable nine-way separation was
+    /// ΔE 4.8 under protanopia, against a floor of 8 — because protan/deutan
+    /// vision collapses the hue circle onto one axis, and no nine hues survive
+    /// it. The shipped palette measured ΔE 8.6 (GEM vs MET Norway).
+    ///
+    /// So colour stopped pretending to identify the source and now encodes the
+    /// only thing about a source that changes its meaning. Which source it is
+    /// comes from the short label printed beside every dot. Measured with the
+    /// dataviz checker: these two separate at ΔE 29.4 under protanopia, and
+    /// neither collides with the comfort ramp (worst all-pairs ΔE 15.2, which is
+    /// good↔poor itself).
     var colorHex: String {
-        switch self {
-        case .ecmwf:       "5BA3D4"   // blue
-        case .gfs:         "4ECDC4"   // teal
-        case .icon:        "7DD87D"   // light green
-        case .metno:       "6EA8FE"   // periwinkle
-        case .gem:         "E0A3F5"   // light purple
-        case .ukmo:        "F58F6B"   // coral
-        case .openWeather: "F5A623"   // amber
-        case .weatherKit:  "3DD68C"   // Apple green
-        case .bom:         "C084FC"   // purple
+        switch kind {
+        case .forecast:    "5BA3D4"   // blue — a model's opinion
+        case .observation: "C9E0F0"   // near-white ink — measured, not predicted
         }
     }
 
