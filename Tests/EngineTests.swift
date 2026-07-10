@@ -965,3 +965,131 @@ final class DisplayScaleTests: XCTestCase {
         XCTAssertTrue(UserDefaults.standard.object(forKey: "unset.key") as? Bool ?? true)
     }
 }
+
+// MARK: - Severe-weather warnings
+//
+// The point-in-polygon test decides whether someone standing inside a bushfire
+// polygon is shown the warning. A false negative is a safety failure, so this is
+// tested adversarially.
+final class WarningGeometryTests: XCTestCase {
+
+    private func c(_ lat: Double, _ lon: Double) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+
+    // A square around Brisbane-ish coords.
+    private var square: [CLLocationCoordinate2D] {
+        [c(-27.5, 152.9), c(-27.5, 153.1), c(-27.3, 153.1), c(-27.3, 152.9), c(-27.5, 152.9)]
+    }
+
+    func testPointInsidePolygonIsDetected() {
+        XCTAssertTrue(WarningGeometry.pointInRing(c(-27.4, 153.0), square))
+    }
+
+    func testPointOutsidePolygonIsNot() {
+        XCTAssertFalse(WarningGeometry.pointInRing(c(-27.9, 153.0), square), "south of the box")
+        XCTAssertFalse(WarningGeometry.pointInRing(c(-27.4, 154.0), square), "east of the box")
+    }
+
+    func testDegeneratePolygonNeverContains() {
+        XCTAssertFalse(WarningGeometry.pointInRing(c(-27.4, 153.0), [c(-27.5, 152.9), c(-27.3, 153.1)]))
+    }
+
+    func testPolygonWithAHoleExcludesTheHole() {
+        let hole = [c(-27.45, 152.95), c(-27.45, 153.05), c(-27.35, 153.05), c(-27.35, 152.95), c(-27.45, 152.95)]
+        let area = WarningArea.polygon(rings: [square, hole])
+        XCTAssertTrue(area.contains(c(-27.31, 152.91)), "inside outer, outside hole")
+        XCTAssertFalse(area.contains(c(-27.40, 153.00)), "inside the hole → not covered")
+    }
+
+    func testPointAreaUsesRadius() {
+        let area = WarningArea.point(c(-27.87, 153.35), radiusKm: 50)
+        XCTAssertTrue(area.contains(c(-27.9, 153.4)), "a few km away")
+        XCTAssertFalse(area.contains(c(-28.9, 153.35)), "~110 km south")
+    }
+
+    func testCollectionIsCoveredIfAnyMemberIs() {
+        let far = WarningArea.polygon(rings: [[c(-10, 140), c(-10, 141), c(-11, 141), c(-11, 140), c(-10, 140)]])
+        let near = WarningArea.polygon(rings: [square])
+        XCTAssertTrue(WarningArea.collection([far, near]).contains(c(-27.4, 153.0)))
+        XCTAssertFalse(WarningArea.collection([far]).contains(c(-27.4, 153.0)))
+    }
+
+    func testHaversineIsAboutRight() {
+        // Brisbane ↔ Gold Coast ≈ 70 km.
+        let d = WarningGeometry.haversineKm(c(-27.47, 153.02), c(-28.00, 153.43))
+        XCTAssertEqual(d, 70, accuracy: 12)
+    }
+
+    // MARK: Severity mapping
+
+    func testSeverityNormalisesTheManyWordings() {
+        XCTAssertEqual(WarningSeverity.from("Emergency Warning"), .emergency)
+        XCTAssertEqual(WarningSeverity.from("EVACUATE NOW"), .emergency)
+        XCTAssertEqual(WarningSeverity.from("Watch and Act"), .watchAndAct)
+        XCTAssertEqual(WarningSeverity.from("Severe"), .watchAndAct)
+        XCTAssertEqual(WarningSeverity.from("Advice"), .advice)
+        XCTAssertEqual(WarningSeverity.from("AVOID SMOKE"), .advice)
+        XCTAssertEqual(WarningSeverity.from(nil), .unknown)
+        XCTAssertEqual(WarningSeverity.from("gibberish"), .unknown)
+    }
+
+    func testSeveritySortsWorstFirst() {
+        XCTAssertTrue(WarningSeverity.emergency > WarningSeverity.watchAndAct)
+        XCTAssertTrue(WarningSeverity.watchAndAct > WarningSeverity.advice)
+    }
+
+    // MARK: NSW description parsing
+
+    func testNSWFieldExtraction() {
+        let html = "ALERT LEVEL: Emergency Warning<br />LOCATION: Somewhere<br />TYPE: Bush Fire<br />STATUS: out of control"
+        XCTAssertEqual(WarningsService.field("ALERT LEVEL", in: html), "Emergency Warning")
+        XCTAssertEqual(WarningsService.field("TYPE", in: html), "Bush Fire")
+        XCTAssertEqual(WarningsService.field("STATUS", in: html), "out of control")
+        XCTAssertNil(WarningsService.field("MISSING", in: html))
+    }
+
+    // MARK: GeoJSON decode
+
+    func testDecodesPolygonFeatureAndProperties() {
+        let json = """
+        {"type":"FeatureCollection","features":[
+          {"type":"Feature",
+           "properties":{"WarningTitle":"Test fire","WarningLevel":"Watch and Act","UniqueID":"abc"},
+           "geometry":{"type":"Polygon","coordinates":[[[152.9,-27.5],[153.1,-27.5],[153.1,-27.3],[152.9,-27.3],[152.9,-27.5]]]}}
+        ]}
+        """.data(using: .utf8)!
+        let feats = GeoFeature.decode(json)!
+        XCTAssertEqual(feats.count, 1)
+        XCTAssertEqual(feats[0].string("WarningTitle"), "Test fire")
+        XCTAssertEqual(feats[0].id, "abc")
+        XCTAssertTrue(feats[0].area.contains(CLLocationCoordinate2D(latitude: -27.4, longitude: 153.0)))
+        XCTAssertFalse(feats[0].area.contains(CLLocationCoordinate2D(latitude: -30.0, longitude: 153.0)))
+    }
+
+    /// GeoJSON is [lon, lat]. Swapping them would put every Australian warning in
+    /// the wrong hemisphere — this pins the ordering.
+    func testGeoJSONCoordinateOrderIsLonLat() {
+        let json = """
+        {"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{},
+           "geometry":{"type":"Point","coordinates":[153.35,-27.87]}}]}
+        """.data(using: .utf8)!
+        let area = GeoFeature.decode(json)![0].area
+        // Covered near Hope Island (-27.87, 153.35), not at the swapped (153.35, -27.87).
+        XCTAssertTrue(area.contains(CLLocationCoordinate2D(latitude: -27.87, longitude: 153.35)))
+    }
+
+    func testHandlesGeometryCollection() {
+        let json = """
+        {"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"title":"x"},
+           "geometry":{"type":"GeometryCollection","geometries":[
+             {"type":"Point","coordinates":[153.0,-27.4]},
+             {"type":"Polygon","coordinates":[[[152.9,-27.5],[153.1,-27.5],[153.1,-27.3],[152.9,-27.3],[152.9,-27.5]]]}]}}]}
+        """.data(using: .utf8)!
+        let feats = GeoFeature.decode(json)!
+        XCTAssertEqual(feats.count, 1, "a GeometryCollection feature must not be dropped")
+        XCTAssertTrue(feats[0].area.contains(CLLocationCoordinate2D(latitude: -27.4, longitude: 153.0)))
+    }
+}

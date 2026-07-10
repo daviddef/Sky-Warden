@@ -17,6 +17,7 @@ struct HomeView: View {
 
     @State private var selectedMetric: ComfortMetric?
     @State private var onThisDay: OnThisDay?
+    @State private var warnings: [WeatherWarning] = []
     @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
 
     private var dialStyle: DialStyle { DialStyle(rawValue: dialStyleRaw) ?? .arc }
@@ -37,6 +38,11 @@ struct HomeView: View {
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
+                if !warnings.isEmpty {
+                    WarningsBanner(warnings: warnings)
+                        .padding(.horizontal, 16).padding(.top, 12)
+                }
+
                 ratingBanner
                     .padding(.horizontal, 20).padding(.top, 14)
 
@@ -68,6 +74,9 @@ struct HomeView: View {
         }
         .task(id: location.coordinate.latitude) {
             onThisDay = try? await HistoricalService().onThisDay(location: location)
+        }
+        .task(id: location.coordinate.latitude) {
+            warnings = await WarningsService().warnings(near: location)
         }
     }
 
