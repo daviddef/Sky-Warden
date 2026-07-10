@@ -63,13 +63,13 @@ struct ComfortDialView: View {
         let metric = r.metric
         let score = r.score
         let angle = Comfort.angle(score)
-        let color = Comfort.needleColor(metric, score)
+        let color = Comfort.comfortColor(score)   // same ramp as the radial dial
         let lw: CGFloat = isSelected ? 12 : 9
 
         // Track + faint "good" half
         ctx.stroke(arc(-90, 90, rad), with: .color(Sky.surface),
                    style: StrokeStyle(lineWidth: lw, lineCap: .round))
-        ctx.stroke(arc(-90, 0, rad), with: .color(Sky.green.opacity(0.06)),
+        ctx.stroke(arc(-90, 0, rad), with: .color(Comfort.good.opacity(0.06)),
                    style: StrokeStyle(lineWidth: lw, lineCap: .round))
 
         // Today's forecast min/max: faint band + two ticks
@@ -101,10 +101,11 @@ struct ComfortDialView: View {
                        style: StrokeStyle(lineWidth: lw, lineCap: .round))
         }
 
-        // Per-source dots
+        // Per-source ticks. Neutral, not nine hues: here only the spread matters,
+        // and nine source colours failed colour-blind separation anyway.
         for s in r.perSource {
-            let p = polar(Comfort.angle(metric.score(s.value)), rad)
-            ctx.fill(dot(p, 2.5), with: .color(Color(hex: s.source.colorHex).opacity(0.7)))
+            ctx.stroke(tick(Comfort.angle(metric.score(s.value)), rad, lw),
+                       with: .color(Sky.muted.opacity(0.5)), style: StrokeStyle(lineWidth: 1))
         }
 
         // Needle tip (+ flag halo)
@@ -135,17 +136,19 @@ struct ComfortDialView: View {
         ctx.stroke(line, with: .color(Sky.white.opacity(0.2)),
                    style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
 
-        ctx.draw(Text("◀ good").font(.system(size: 9)).foregroundColor(Sky.green.opacity(0.55)),
-                 at: CGPoint(x: cx - baseR + 4, y: cy + 4), anchor: .trailing)
-        ctx.draw(Text("not ▶").font(.system(size: 9)).foregroundColor(Sky.red.opacity(0.55)),
-                 at: CGPoint(x: cx + baseR - 4, y: cy + 4), anchor: .leading)
+        // Anchored to the canvas edges, not outward from the rings — the latter
+        // pushed both labels off the sides and truncated their arrows.
+        ctx.draw(Text("◀ good").font(.system(size: 9)).foregroundColor(Comfort.good.opacity(0.6)),
+                 at: CGPoint(x: 2, y: cy + 4), anchor: .leading)
+        ctx.draw(Text("poor ▶").font(.system(size: 9)).foregroundColor(Comfort.poor.opacity(0.6)),
+                 at: CGPoint(x: W - 2, y: cy + 4), anchor: .trailing)
     }
 
     // MARK: - Centre readout (separate flow block)
     @ViewBuilder
     private var readout: some View {
         if let metric = selected, let r = data.ring(metric) {
-            let color = Comfort.needleColor(metric, r.score)
+            let color = Comfort.comfortColor(r.score)
             VStack(spacing: 1) {
                 Text(metric.emoji).font(.system(size: 24))
                 Text(metric.format(r.value))

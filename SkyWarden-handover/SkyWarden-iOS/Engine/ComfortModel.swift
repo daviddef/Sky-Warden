@@ -136,7 +136,32 @@ enum ComfortMetric: String, CaseIterable, Identifiable {
 
 // MARK: - Colour helpers
 enum Comfort {
-    /// Needle colour: brighten toward white when comfortable, toward red when not.
+
+    /// The one comfort ramp: hue means how good this is, and nothing else.
+    ///
+    /// Previously each metric carried its own hue and drifted toward red as it
+    /// worsened, so five rings meant five hues at five saturations, and colour
+    /// stopped meaning anything by itself. Here green is good, red is not, and a
+    /// dim desaturated blue-grey is the borderline — receding into the
+    /// background exactly where the reading is unremarkable.
+    ///
+    /// Diverging, so: two hues and a neutral midpoint, never a hue in the
+    /// middle. Validated with the dataviz palette checker against the navy
+    /// surface — worst adjacent CVD separation ΔE 38.5 under protanopia (target
+    /// ≥ 12), every stop over 3:1 contrast, and lightness falls monotonically
+    /// from each pole into the neutral so the ramp survives greyscale.
+    static let good    = Color(hex: "3DD68C")
+    static let neutral = Color(hex: "5A7089")
+    static let poor    = Color(hex: "FF7A6E")
+
+    /// score: +1 comfortable … 0 borderline … −1 uncomfortable
+    static func comfortColor(_ score: Double) -> Color {
+        let s = max(-1, min(1, score))
+        return s >= 0 ? mix(neutral, good, s) : mix(neutral, poor, -s)
+    }
+
+    /// Kept for the Week and Sources tabs, where per-metric identity still
+    /// matters because several metrics share a single row.
     static func needleColor(_ metric: ComfortMetric, _ score: Double) -> Color {
         score >= 0
             ? mix(metric.colorGood, .white, score * 0.15)
@@ -149,9 +174,9 @@ enum Comfort {
     static func overallLabel(_ s: Double) -> String {
         s >= 0.7 ? "Great" : s >= 0.3 ? "Good" : s >= 0 ? "OK" : s >= -0.5 ? "Rough" : "Poor"
     }
-    static func overallColor(_ s: Double) -> Color {
-        s >= 0.4 ? Sky.green : s >= 0 ? Sky.amber : Sky.red
-    }
+    /// The icon's orange circle, doing its real job: one colour for "how good is
+    /// today", on the same ramp as every ring.
+    static func overallColor(_ s: Double) -> Color { comfortColor(s) }
     /// Comfort score → dial angle in degrees (0° = top, −90° = left/good, +90° = right).
     static func angle(_ score: Double) -> Double { -score * 90 }
 

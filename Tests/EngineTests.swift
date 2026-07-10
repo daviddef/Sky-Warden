@@ -80,6 +80,34 @@ final class ComfortModelTests: XCTestCase {
         XCTAssertEqual(Comfort.overallLabel(-0.9), "Poor")
     }
 
+    /// Hue now means comfort and nothing else, so the ramp's endpoints and
+    /// midpoint are load-bearing: a metric at its best must not render red.
+    func testComfortRampAnchorsAtItsPoles() {
+        XCTAssertEqual(Comfort.comfortColor(1).rgba.r, Comfort.good.rgba.r, accuracy: 0.001)
+        XCTAssertEqual(Comfort.comfortColor(-1).rgba.r, Comfort.poor.rgba.r, accuracy: 0.001)
+        XCTAssertEqual(Comfort.comfortColor(0).rgba.g, Comfort.neutral.rgba.g, accuracy: 0.001)
+        // Clamped, not wrapped: an out-of-range score must not fold back to green.
+        XCTAssertEqual(Comfort.comfortColor(-4).rgba.r, Comfort.poor.rgba.r, accuracy: 0.001)
+    }
+
+    /// Red channel rises monotonically as comfort falls — the ramp reads the
+    /// same way in greyscale, and to a colour-blind user.
+    func testComfortRampIsMonotonicFromGoodToPoor() {
+        let scores = stride(from: 1.0, through: -1.0, by: -0.25)
+        let reds = scores.map { Comfort.comfortColor($0).rgba.r }
+        XCTAssertEqual(reds, reds.sorted(), "red must increase as the score worsens")
+        let greens = scores.map { Comfort.comfortColor($0).rgba.g }
+        XCTAssertEqual(greens.first!, greens.max()!, accuracy: 0.001, "the good pole is the greenest")
+    }
+
+    /// The verdict orb is the icon's circle doing its job: it must sit on the
+    /// same ramp as the rings, or the middle of the dial contradicts its edge.
+    func testOverallColourUsesTheSameRamp() {
+        for s in [-1.0, -0.4, 0.0, 0.5, 1.0] {
+            XCTAssertEqual(Comfort.overallColor(s).rgba.r, Comfort.comfortColor(s).rgba.r, accuracy: 0.001)
+        }
+    }
+
     func testSeasonIsHemisphereAware() {
         let july = DateComponents(calendar: .current, year: 2026, month: 7, day: 10).date!
         XCTAssertEqual(currentSeason(latitude: -27.5, date: july), "winter")  // Brisbane

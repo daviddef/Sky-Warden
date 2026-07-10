@@ -1,17 +1,23 @@
 // Sky Warden — Radial Comfort Dial
 //
-// The alternative to ComfortDialView's half-gauge. Same data, same comfort-angle
-// mapping — good sweeps anticlockwise from 12 o'clock, uncomfortable sweeps
-// clockwise — so the two dials can never disagree.
+// Reads as one picture: how good is today, and do the sources agree.
 //
-// Three ideas from the design brief land here:
-//   · the verdict orb   the app icon's circle, tinted by how good today actually
-//                       is (red bad → green good), stating the verdict in words
-//   · the confidence rim a dashed ring around the orb; the gap is the doubt
-//   · burst open        tapping a ring replaces the orb's verdict with that
-//                       metric's real value, min/max and spread
+// What it encodes, and where each thing went:
+//   position  the reading. 12 o'clock is borderline; anticlockwise is
+//             comfortable, clockwise is not. Same mapping as the arc dial.
+//   hue       comfort, and ONLY comfort (Comfort.comfortColor). Not the metric.
+//   the orb   the verdict — the app icon's circle, tinted on the same ramp.
+//   the rim   confidence. The gap in the dashes is the doubt.
+//   ticks     where each source actually sits. A wide scatter IS disagreement.
 //
-// Drawn with Canvas (immediate mode), like the arc dial.
+// Decluttered deliberately:
+//   · the metric's icon rides its own needle tip, so the five icons sit at five
+//     different angles instead of stacking into a totem pole at 12 o'clock
+//   · no value labels on the canvas — the pills below already carry all five,
+//     and printing them twice was most of the noise. Tap a ring and the orb
+//     bursts open with that metric's number.
+//   · source ticks are neutral, not nine hues. Which source is which belongs in
+//     the Sources tab; here only the spread matters.
 
 import SwiftUI
 
@@ -21,22 +27,26 @@ struct RadialDialView: View {
     let confidence: Double
     @Binding var selected: ComfortMetric?
 
-    private let W: CGFloat = 330
-    private let baseR: CGFloat = 134
-    private let gap: CGFloat = 17
+    private let W: CGFloat = 320
+    private let baseR: CGFloat = 140
+    // Tip icons ride the rings, so the gap must exceed a tip's diameter —
+    // otherwise metrics with equal scores (all the good ones sit at exactly +1)
+    // land on the same bearing and their icons collide.
+    private let gap: CGFloat = 20
     private var center: CGPoint { CGPoint(x: W / 2, y: W / 2) }
     private func radius(_ i: Int) -> CGFloat { baseR - CGFloat(i) * gap }
 
-    private var orbR: CGFloat { radius(4) - 16 }
+    private var orbR: CGFloat { radius(4) - 17 }
 
     /// The arc dial spends 90° on a full-scale reading. A ring has the whole
     /// circle, so spread it wider — the same score, more legible.
-    private let spread: Double = 1.6
+    private let spread: Double = 1.55
     private func angle(_ score: Double) -> Double { Comfort.angle(score) * spread }
 
     var body: some View {
         ZStack {
             Canvas { ctx, _ in
+                drawBorderlineMark(ctx)
                 for (i, metric) in ComfortMetric.allCases.enumerated() {
                     guard let r = data.ring(metric) else { continue }
                     drawRing(ctx, reading: r, radius: radius(i), isSelected: selected == metric)
@@ -51,10 +61,12 @@ struct RadialDialView: View {
             })
 
             readout
-                .frame(width: orbR * 1.7)
+                .frame(width: orbR * 1.75)
                 .allowsHitTesting(false)
         }
         .frame(width: W, height: W)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(voiceOverSummary)
     }
 
     // MARK: - Rings
@@ -62,106 +74,94 @@ struct RadialDialView: View {
     private func drawRing(_ ctx: GraphicsContext, reading r: RingReading,
                           radius rad: CGFloat, isSelected: Bool) {
         let metric = r.metric
-        let score = r.score
-        let end = angle(score)
-        let color = Comfort.needleColor(metric, score)
-        let lw: CGFloat = isSelected ? 11 : 8
+        let end = angle(r.score)
+        let color = Comfort.comfortColor(r.score)
+        let lw: CGFloat = isSelected ? 9 : 6.5
 
-        // Full track, with the "good" (anticlockwise) side hinted.
-        ctx.stroke(circle(rad), with: .color(Sky.surface.opacity(0.7)),
+        // Track. Recessive: it's a scale, not data.
+        ctx.stroke(circle(rad), with: .color(Sky.surface.opacity(0.55)),
                    style: StrokeStyle(lineWidth: lw))
-        ctx.stroke(arc(0, -angle(1), rad), with: .color(Sky.green.opacity(0.05)),
-                   style: StrokeStyle(lineWidth: lw, lineCap: .round))
 
-        // Today's forecast min/max as a faint band.
+        // Today's forecast range, as a faint band behind the reading.
         if let mm = r.minMax {
             let a = angle(metric.score(mm.0)), b = angle(metric.score(mm.1))
-            ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.muted.opacity(0.10)),
-                       style: StrokeStyle(lineWidth: lw + 3, lineCap: .round))
+            ctx.stroke(arc(min(a, b), max(a, b), rad), with: .color(Sky.muted.opacity(0.13)),
+                       style: StrokeStyle(lineWidth: lw + 4, lineCap: .round))
         }
 
-        // The reading itself: a sweep out of 12 o'clock.
-        if abs(end) > 1 {
+        // Where each source sits — neutral ticks, so a wide scatter reads as
+        // spread rather than as nine competing colours.
+        for s in r.perSource {
+            let a = angle(metric.score(s.value))
+            ctx.stroke(tick(a, rad, lw), with: .color(Sky.muted.opacity(0.5)),
+                       style: StrokeStyle(lineWidth: 1))
+        }
+
+        // Disagreement: a dashed span across the sources' full width.
+        if r.hasFlag {
+            let scores = r.perSource.map { metric.score($0.value) }
+            if let hi = scores.max(), let lo = scores.min() {
+                ctx.stroke(arc(angle(hi), angle(lo), rad + lw / 2 + 4),
+                           with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.85)),
+                           style: StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
+            }
+        }
+
+        // The reading: a sweep out of borderline.
+        if abs(end) > 1.5 {
             ctx.stroke(arc(0, end, rad), with: .color(color),
                        style: StrokeStyle(lineWidth: lw, lineCap: .round))
         }
 
-        // Where the sources actually sit. A wide scatter IS the disagreement.
-        for s in r.perSource {
-            let p = polar(angle(metric.score(s.value)), rad)
-            ctx.fill(dot(p, 2.4), with: .color(Color(hex: s.source.colorHex).opacity(0.75)))
-        }
-
-        // Fracture: dashed span between the furthest-apart sources.
-        if r.hasFlag {
-            let scores = r.perSource.map { metric.score($0.value) }
-            if let hi = scores.max(), let lo = scores.min() {
-                ctx.stroke(arc(angle(hi), angle(lo), rad),
-                           with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.7)),
-                           style: StrokeStyle(lineWidth: 2, dash: [2, 3]))
-            }
-        }
-
-        // Needle tip + the value, parked just outside the ring.
+        // The needle tip IS the metric's icon. Five tips, five angles — no stack.
         let tip = polar(end, rad)
-        ctx.fill(dot(tip, isSelected ? 7 : 5.5), with: .color(color))
-        ctx.stroke(Path(ellipseIn: rect(tip, isSelected ? 7 : 5.5)),
-                   with: .color(Sky.navy), lineWidth: 1.5)
+        let tipR: CGFloat = isSelected ? 11 : 9
+        ctx.fill(dot(tip, tipR), with: .color(Sky.navy))
+        ctx.stroke(Path(ellipseIn: rect(tip, tipR)), with: .color(color),
+                   lineWidth: isSelected ? 2.5 : 1.8)
+        ctx.draw(Text(metric.emoji).font(.system(size: isSelected ? 13 : 11)), at: tip)
+
+        // A flagged ring gets a halo, so disagreement survives greyscale.
         if r.hasFlag {
-            ctx.stroke(Path(ellipseIn: rect(tip, isSelected ? 10 : 8.5)),
-                       with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.55)), lineWidth: 1.5)
+            ctx.stroke(Path(ellipseIn: rect(tip, tipR + 3)),
+                       with: .color((r.isMajor ? Sky.red : Sky.amber).opacity(0.7)), lineWidth: 1.5)
         }
-
-        // Parked outside the ring, but clamped into the canvas — a needle near
-        // 3 o'clock used to push its value off the edge, silently truncating it.
-        let raw = polar(end, rad + (isSelected ? 19 : 16))
-        let label = CGPoint(x: min(max(raw.x, 26), W - 26), y: min(max(raw.y, 12), W - 12))
-        chip(ctx, metric.format(r.value), at: label, color: color, size: isSelected ? 12 : 10)
-
-        // Emoji badge at 12 o'clock, on the ring it belongs to.
-        let ip = polar(0, rad)
-        ctx.fill(dot(ip, isSelected ? 12 : 10), with: .color(Sky.navy))
-        ctx.stroke(Path(ellipseIn: rect(ip, isSelected ? 12 : 10)),
-                   with: .color(isSelected ? color : Sky.surface), lineWidth: isSelected ? 2 : 1.5)
-        ctx.draw(Text(metric.emoji).font(.system(size: isSelected ? 14 : 12)), at: ip)
     }
 
-    /// Rings sit only `gap` apart, so a value label offset outward lands squarely
-    /// on top of the next ring — coloured text on a coloured arc, invisible. The
-    /// backing chip is what makes all five readable at once.
-    private func chip(_ ctx: GraphicsContext, _ text: String, at p: CGPoint,
-                      color: Color, size: CGFloat) {
-        let resolved = ctx.resolve(Text(text)
-            .font(.system(size: size, weight: .semibold))
-            .foregroundColor(color))
-        let m = resolved.measure(in: CGSize(width: 120, height: 40))
-        let box = CGRect(x: p.x - m.width / 2 - 4, y: p.y - m.height / 2 - 1.5,
-                         width: m.width + 8, height: m.height + 3)
-        ctx.fill(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(Sky.navy.opacity(0.82)))
-        ctx.draw(resolved, at: p)
+    /// 12 o'clock is "borderline". Marking it makes every sweep's direction
+    /// meaningful instead of decorative.
+    private func drawBorderlineMark(_ ctx: GraphicsContext) {
+        var line = Path()
+        line.move(to: polar(0, orbR + 14))
+        line.addLine(to: polar(0, baseR + 9))
+        ctx.stroke(line, with: .color(Sky.white.opacity(0.13)),
+                   style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
+
+        ctx.draw(Text("good").font(.system(size: 8.5)).foregroundColor(Comfort.good.opacity(0.6)),
+                 at: CGPoint(x: 2, y: center.y + baseR - 24), anchor: .leading)
+        ctx.draw(Text("poor").font(.system(size: 8.5)).foregroundColor(Comfort.poor.opacity(0.6)),
+                 at: CGPoint(x: W - 2, y: center.y + baseR - 24), anchor: .trailing)
     }
 
     // MARK: - Verdict orb
 
     private func drawOrb(_ ctx: GraphicsContext) {
-        let s = Comfort.overallScore(data)
-        let tint = Comfort.overallColor(s)
+        let tint = Comfort.overallColor(Comfort.overallScore(data))
         ctx.fill(dot(center, orbR), with: .radialGradient(
-            Gradient(colors: [tint.opacity(0.34), tint.opacity(0.08), Sky.navy]),
+            Gradient(colors: [tint.opacity(0.30), tint.opacity(0.07), Sky.navy]),
             center: center, startRadius: 0, endRadius: orbR))
-        ctx.stroke(Path(ellipseIn: rect(center, orbR)),
-                   with: .color(tint.opacity(0.55)), lineWidth: 1.5)
+        ctx.stroke(Path(ellipseIn: rect(center, orbR)), with: .color(tint.opacity(0.5)), lineWidth: 1.5)
     }
 
     /// A dashed rim whose filled fraction is the consensus confidence — the gap
-    /// is literally the doubt. Dashes keep it from reading as another metric ring.
+    /// is literally the doubt. Dashes keep it from reading as another ring.
     private func drawConfidenceRim(_ ctx: GraphicsContext) {
-        let rimR = orbR + 9
-        let color = confidence >= 0.8 ? Sky.green : confidence >= 0.5 ? Sky.amber : Sky.red
-        ctx.stroke(circle(rimR), with: .color(Sky.surface.opacity(0.5)),
+        let rimR = orbR + 8
+        let color = confidence >= 0.8 ? Comfort.good : confidence >= 0.5 ? Sky.amber : Comfort.poor
+        ctx.stroke(circle(rimR), with: .color(Sky.surface.opacity(0.45)),
                    style: StrokeStyle(lineWidth: 2.5, dash: [2, 4]))
         ctx.stroke(arc(0, 360 * max(0, min(1, confidence)), rimR),
-                   with: .color(color.opacity(0.85)),
+                   with: .color(color.opacity(0.9)),
                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [2, 4]))
     }
 
@@ -170,38 +170,44 @@ struct RadialDialView: View {
     @ViewBuilder
     private var readout: some View {
         if let metric = selected, let r = data.ring(metric) {
-            let color = Comfort.needleColor(metric, r.score)
+            let color = Comfort.comfortColor(r.score)
             VStack(spacing: 1) {
-                Text(metric.emoji).font(.system(size: 19))
+                Text(metric.label.uppercased())
+                    .font(.system(size: 8)).foregroundColor(Sky.muted).kerning(0.6)
                 Text(metric.format(r.value))
-                    .font(.system(size: 31, weight: .ultraLight, design: .rounded))
+                    .font(.system(size: 28, weight: .ultraLight, design: .rounded))
                     .foregroundColor(color)
                 Text(metric.comfortLabel(r.value))
                     .font(.system(size: 11, weight: .semibold)).foregroundColor(color)
-                if let mm = r.minMax {
-                    Text("\(metric.format(mm.0))–\(metric.format(mm.1))")
-                        .font(.system(size: 9)).foregroundColor(Sky.muted)
-                }
                 if r.hasFlag {
                     Text("\(r.isMajor ? "🚨" : "⚠️") \(metric.format(r.spread)) apart")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 8.5, weight: .medium))
                         .foregroundColor(r.isMajor ? Sky.red : Sky.amber)
+                } else if let mm = r.minMax {
+                    Text("\(metric.format(mm.0))–\(metric.format(mm.1))")
+                        .font(.system(size: 8.5)).foregroundColor(Sky.muted)
                 }
             }
-            .transition(.scale.combined(with: .opacity))
+            .transition(.scale(scale: 0.9).combined(with: .opacity))
         } else {
             let s = Comfort.overallScore(data)
-            VStack(spacing: 1) {
+            VStack(spacing: 0) {
                 Text(Units.tempString(temperature))
                     .font(.system(size: 34, weight: .ultraLight, design: .rounded))
                     .foregroundColor(Sky.white)
                 Text(Comfort.overallLabel(s))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Comfort.overallColor(s))
-                Text("\(Int((confidence * 100).rounded()))% confident")
-                    .font(.system(size: 8.5)).foregroundColor(Sky.muted)
             }
         }
+    }
+
+    private var voiceOverSummary: String {
+        let s = Comfort.overallScore(data)
+        let flags = data.rings.filter(\.hasFlag).map(\.metric.label)
+        let base = "Comfort \(Comfort.overallLabel(s)). \(Units.tempString(temperature)). "
+            + "\(Int((confidence * 100).rounded())) percent confidence."
+        return flags.isEmpty ? base : base + " Sources disagree on \(flags.joined(separator: ", "))."
     }
 
     // MARK: - Geometry
@@ -220,20 +226,32 @@ struct RadialDialView: View {
         }
         return p
     }
+    private func tick(_ a: Double, _ r: CGFloat, _ lw: CGFloat) -> Path {
+        var p = Path()
+        p.move(to: polar(a, r - lw / 2))
+        p.addLine(to: polar(a, r + lw / 2))
+        return p
+    }
     private func circle(_ r: CGFloat) -> Path { Path(ellipseIn: rect(center, r)) }
     private func rect(_ c: CGPoint, _ r: CGFloat) -> CGRect {
         CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
     }
     private func dot(_ c: CGPoint, _ r: CGFloat) -> Path { Path(ellipseIn: rect(c, r)) }
 
-    /// Nearest ring to a tap; a tap on the orb clears the selection.
+    /// Nearest ring to a tap; a tap on the orb clears the selection. Icons ride
+    /// the tips, so a tap near a tip should select that ring too.
     private func hit(at p: CGPoint) -> ComfortMetric? {
+        for (i, metric) in ComfortMetric.allCases.enumerated() {
+            guard let r = data.ring(metric) else { continue }
+            let tip = polar(angle(r.score), radius(i))
+            if hypot(p.x - tip.x, p.y - tip.y) <= 14 { return selected == metric ? nil : metric }
+        }
         let dist = hypot(p.x - center.x, p.y - center.y)
         guard dist > orbR else { return nil }
         var best: (ComfortMetric, CGFloat)?
         for (i, metric) in ComfortMetric.allCases.enumerated() {
             let d = abs(dist - radius(i))
-            if d < gap / 2 + 5, best == nil || d < best!.1 { best = (metric, d) }
+            if d < gap / 2 + 4, best == nil || d < best!.1 { best = (metric, d) }
         }
         guard let found = best?.0 else { return nil }
         return selected == found ? nil : found

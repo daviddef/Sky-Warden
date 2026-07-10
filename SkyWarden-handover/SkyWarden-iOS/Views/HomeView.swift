@@ -87,12 +87,13 @@ struct HomeView: View {
     // MARK: - Pills (mirror the ring taps, bigger touch target)
     //
     // A pill's fill IS its comfort: the more uncomfortable the metric, the more
-    // its own colour floods the tile. Comfortable metrics stay quiet. The word
-    // ("Humid", "Windy") carries the same meaning, so nothing is colour-alone.
+    // the ramp's red floods the tile. Comfortable metrics stay quiet. The word
+    // ("Oppressive", "Calm") carries the same meaning, so nothing is colour-alone.
     private var pills: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 5), spacing: 5) {
             ForEach(comfort.rings) { r in
-                let color = Comfort.needleColor(r.metric, r.score)
+                // Same ramp as the dial: hue is comfort, never metric identity.
+                let color = Comfort.comfortColor(r.score)
                 let discomfort = max(0, -r.score)          // 0 = fine, 1 = miserable
                 let isTapped = selectedMetric == r.metric
                 Button {
@@ -150,7 +151,7 @@ struct HomeView: View {
     // banner: a missing source is only interesting as a dent in confidence and
     // a source count, not as its own paragraph.
     private var confidenceWidget: some View {
-        let color = confidence >= 0.8 ? Sky.green : confidence >= 0.5 ? Sky.amber : Sky.red
+        let color = confidence >= 0.8 ? Comfort.good : confidence >= 0.5 ? Sky.amber : Comfort.poor
         let used = consensus.sources.count
         let total = used + failedSources.count
         return HStack(spacing: 8) {
@@ -179,69 +180,101 @@ struct HomeView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Tab summary grid
+    // MARK: - Tab summary
     //
-    // The bridge from the visual layer to the detail tabs: one real number per
-    // tab, tap to go there. Every tile shows a measured value or an em dash —
-    // none invent a number to look complete.
+    // The bridge from the visual layer to the detail tabs: one real line per tab,
+    // tap to go there. Values are measured or an em dash — none invent a number
+    // to look complete.
+    //
+    // A list, not a grid. Grid tiles force every value into the same small box,
+    // so "High 1.8m" and "0" get equal weight and nothing lines up; the eye has
+    // to re-anchor on each tile. Rows share one baseline and one right edge, so
+    // the values form a single scannable column, and the secondary text has room
+    // to say something useful instead of being truncated.
     private var tabSummary: some View {
-        let tomorrow = consensus.dailyForecast.first
+        let today = consensus.dailyForecast.first
         let week = consensus.dailyForecast.prefix(7)
         let wetDays = week.filter { $0.rainProbability >= 50 }.count
         let nextTide = tideDay?.events.first { $0.time > Date() }
 
-        let tiles: [SummaryTile] = [
-            .init(tab: .today, emoji: "📋",
-                  value: tomorrow.map { "\(Units.tempString($0.tempMax))/\(Units.tempString($0.tempMin))" },
-                  caption: "Today"),
-            .init(tab: .week, emoji: "📅",
+        let rows: [SummaryRow] = [
+            .init(tab: .today, icon: "thermometer.medium",
+                  value: today.map { "\(Units.tempString($0.tempMax)) / \(Units.tempString($0.tempMin))" },
+                  title: "Today", detail: today?.condition.rawValue.lowercased()),
+            .init(tab: .week, icon: "calendar",
                   value: week.isEmpty ? nil : (wetDays == 0 ? "All dry" : "\(wetDays) wet"),
-                  caption: "\(week.count)-day"),
-            .init(tab: .tides, emoji: "🌊",
-                  value: nextTide.map { "\($0.type.rawValue) \($0.heightDisplay)" },
-                  caption: nextTide.map(\.timeDisplay) ?? "Tides"),
-            .init(tab: .uv, emoji: "☀️",
+                  title: "Next \(week.count) days", detail: week.isEmpty ? nil : "chance of rain over 50%"),
+            .init(tab: .tides, icon: "water.waves",
+                  value: nextTide.map(\.heightDisplay),
+                  title: "Next tide",
+                  detail: nextTide.map { "\($0.type.rawValue.lowercased()) at \($0.timeDisplay)" }),
+            .init(tab: .uv, icon: "sun.max",
                   value: consensus.uvIndex.isFinite ? "\(Int(consensus.uvIndex.rounded()))" : nil,
-                  caption: ComfortMetric.uv.comfortLabel(consensus.uvIndex)),
-            .init(tab: .sky, emoji: moonData?.phase.emoji ?? "🔭",
+                  title: "UV index", detail: ComfortMetric.uv.comfortLabel(consensus.uvIndex).lowercased()),
+            .init(tab: .sky, icon: "moon.stars",
                   value: moonData.map { "\(Int(($0.illumination * 100).rounded()))%" },
-                  caption: moonData?.phase.rawValue ?? "Sky"),
-            .init(tab: .sources, emoji: "📡",
+                  title: "Moon", detail: moonData?.phase.rawValue.lowercased()),
+            .init(tab: .sources, icon: "antenna.radiowaves.left.and.right",
                   value: "\(consensus.sources.count)/\(consensus.sources.count + failedSources.count)",
-                  caption: "Sources"),
+                  title: "Sources agreeing",
+                  detail: flagCount == 0 ? "no disagreements" : "\(flagCount) metric\(flagCount == 1 ? "" : "s") vary"),
         ]
 
         return VStack(alignment: .leading, spacing: 6) {
             Text("AT A GLANCE")
                 .font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                ForEach(tiles) { tile in
-                    Button { onOpenTab?(tile.tab) } label: {
-                        VStack(spacing: 2) {
-                            Text(tile.emoji).font(.system(size: 15))
-                            Text(tile.value ?? "—")
-                                .font(.system(size: 13, weight: .semibold)).foregroundColor(Sky.white)
-                                .lineLimit(1).minimumScaleFactor(0.65)
-                            Text(tile.caption)
-                                .font(.system(size: 8.5)).foregroundColor(Sky.muted)
-                                .lineLimit(1).minimumScaleFactor(0.8)
+
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
+                    Button { onOpenTab?(row.tab) } label: {
+                        HStack(spacing: 11) {
+                            // Monochrome symbols, not emoji: six coloured glyphs in
+                            // a column is noise, and the tab bar already owns emoji.
+                            Image(systemName: row.icon)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(Sky.muted)
+                                .frame(width: 18)
+
+                            Text(row.title)
+                                .font(.system(size: 13)).foregroundColor(Sky.text)
+
+                            Spacer(minLength: 8)
+
+                            if let detail = row.detail {
+                                Text(detail)
+                                    .font(.system(size: 10)).foregroundColor(Sky.muted)
+                                    .lineLimit(1).layoutPriority(-1)
+                            }
+                            Text(row.value ?? "—")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .foregroundColor(row.value == nil ? Sky.muted : Sky.white)
+                                .lineLimit(1)
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold)).foregroundColor(Sky.muted.opacity(0.6))
                         }
-                        .frame(maxWidth: .infinity).padding(.vertical, 9)
-                        .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 11))
+                        .padding(.vertical, 10).padding(.horizontal, 12)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(onOpenTab == nil)
-                    .accessibilityLabel("\(tile.caption), \(tile.value ?? "unavailable"). Opens \(tile.tab.label).")
+                    .accessibilityLabel("\(row.title), \(row.value ?? "unavailable"). Opens \(row.tab.label).")
+
+                    if i < rows.count - 1 {
+                        Rectangle().fill(Sky.surface).frame(height: 1).padding(.leading, 41)
+                    }
                 }
             }
+            .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
 
-    private struct SummaryTile: Identifiable {
+    private struct SummaryRow: Identifiable {
         let tab: ContentView.Tab
-        let emoji: String
+        let icon: String
         let value: String?
-        let caption: String
+        let title: String
+        let detail: String?
         var id: String { tab.rawValue }
     }
 
