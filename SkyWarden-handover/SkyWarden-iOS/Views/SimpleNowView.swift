@@ -221,20 +221,33 @@ struct SimpleNowView: View {
     }
 
     // MARK: - Confidence footer
+    // The moat's wedge: when the sources agree, say so plainly and confidently;
+    // when they don't, name the split and its range and frame it as a decision
+    // ("worth a backup plan") rather than hiding the uncertainty behind one number.
     private var confidenceFooter: some View {
         let flags = comfort.rings.filter(\.hasFlag)
         let agree = flags.isEmpty
         return HStack(spacing: 6) {
             Circle().fill(agree ? Comfort.good : Sky.amber).frame(width: 6, height: 6)
             if agree {
-                Text("\(consensus.sources.count) sources agree")
+                Text("\(consensus.sources.count) sources agree · confident")
                     .font(.system(size: 11)).foregroundColor(Sky.muted)
             } else {
-                Text("sources disagree on \(flags.map { $0.metric.label.lowercased() }.joined(separator: ", "))")
-                    .font(.system(size: 11)).foregroundColor(Sky.amber)
+                Text(disagreementSentence(flags))
+                    .font(.system(size: 11.5, weight: .medium)).foregroundColor(Sky.amber)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.top, 2)
+        .padding(.horizontal, 24).padding(.top, 2)
+    }
+
+    private func disagreementSentence(_ flags: [RingReading]) -> String {
+        guard let worst = flags.max(by: { $0.spread < $1.spread }) else { return "" }
+        let label = worst.metric.label.lowercased()
+        if let (lo, hi) = worst.minMax, worst.metric.format(lo) != worst.metric.format(hi) {
+            return "Sources split on \(label): \(worst.metric.format(lo))–\(worst.metric.format(hi)) — worth a backup plan"
+        }
+        return "Sources disagree on \(label) — worth a backup plan"
     }
 }
 
