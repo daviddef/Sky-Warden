@@ -34,7 +34,7 @@ Status: ✅ done · 🟡 partial · ⬜ not started.
 | 2 | **Confidence signal on every forecast** — High/Med/Low from spread; widen range when unsure | MOAT | M | 🟡 confidence % on dial; Simple footer says "N agree · confident"; "soften headline when unsure" still to do |
 | 3 | **Disagreement flags, only when material** — "4 of 9 say showers, 5 say dry" | MOAT | S | ✅ Simple footer: "Sources split on rain: 10–60% — worth a backup plan" (f377a70) |
 | 4 | **Precip nowcast + rain-start/stop push** — the Dark Sky job | STAKES | M | ⬜ (map has RainViewer nowcast frames; no per-location minute timeline or notifications) |
-| 5 | **Fast, un-paywalled radar with future frames** | STAKES | M | ✅ map + nowcast future frames (2026-07); 🟡 consolidating to one mode |
+| 5 | **Fast, un-paywalled radar with future frames** | STAKES | M | ✅ single mode + nowcast future frames + instant base map / "Sharpening" pill (8acc28d) |
 | 6 | **Widgets + Apple Watch complication w/ confidence dot** | STAKES | M | ⬜ watch scaffolding exists; complications + widgets to build |
 | 7 | **"Will it rain on my ___" activity planner** — decision framing | MOAT-adj | M | ⬜ (Plans tab is a stub to build on) |
 | 8 | **Progressive-disclosure spaghetti/plume view** for power users | MOAT | M | ⬜ premium candy |
