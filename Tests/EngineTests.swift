@@ -1207,4 +1207,22 @@ final class METARServiceTests: XCTestCase {
         XCTAssertTrue(METARService.parse(Data("[]".utf8)).isEmpty)
         XCTAssertTrue(METARService.parse(Data("garbage".utf8)).isEmpty)
     }
+
+    /// Regression: the live API returns fractional seconds ("…00.000Z"), which
+    /// the default ISO8601 formatter rejects. Parsing that as 1970 would make
+    /// every real station read as stale and the whole feature silently dead.
+    func testParsesRealFractionalSecondTimeFormat() {
+        XCTAssertNotNil(METARService.parseTime("2026-07-11T00:20:00.000Z"))
+        XCTAssertNotNil(METARService.parseTime("2026-07-11T00:20:00Z"))
+        XCTAssertNotNil(METARService.parseTime("2026-07-11 00:20:00"))
+        XCTAssertNil(METARService.parseTime("not a date"))
+
+        // End to end: a real-shaped feed must yield a usable, fresh station.
+        let json = #"[{"icaoId":"EGLC","name":"London City","lat":51.505,"lon":0.055,"temp":20,"wspd":9,"reportTime":"2026-07-11T00:20:00.000Z"}]"#
+        let stations = METARService.parse(Data(json.utf8))
+        XCTAssertEqual(stations.count, 1)
+        let asOf = METARService.parseTime("2026-07-11T00:40:00.000Z")!   // 20 min later
+        let best = METARService.nearest(stations, to: CLLocation(latitude: 51.51, longitude: 0.05), now: asOf)
+        XCTAssertEqual(best?.icao, "EGLC", "a fresh real-format station must be selected, not dropped")
+    }
 }

@@ -52,32 +52,40 @@ struct METARService {
 
     static func parse(_ data: Data) -> [Station] {
         guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-        let iso = ISO8601DateFormatter()
         return arr.compactMap { m in
             guard let icao = m["icaoId"] as? String,
                   let lat = (m["lat"] as? NSNumber)?.doubleValue,
                   let lon = (m["lon"] as? NSNumber)?.doubleValue,
-                  let temp = (m["temp"] as? NSNumber)?.doubleValue else { return nil }
+                  let temp = (m["temp"] as? NSNumber)?.doubleValue,
+                  let time = (m["reportTime"] as? String).flatMap(parseTime) else { return nil }
             // wspd is in KNOTS; the app works in km/h.
             let windKt = (m["wspd"] as? NSNumber)?.doubleValue ?? 0
-            let time = (m["reportTime"] as? String).flatMap { iso.date(from: $0.replacingOccurrences(of: " ", with: "T")) }
-                ?? (m["reportTime"] as? String).flatMap { parseSpaceTime($0) }
-                ?? Date(timeIntervalSince1970: 0)
             return Station(icao: icao, name: (m["name"] as? String) ?? icao,
                            coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
                            tempC: temp, windKmh: windKt * 1.852, time: time)
         }
     }
 
-    /// aviationweather returns times like "2026-07-11 00:00:00" (space, no zone,
-    /// UTC). Parse that shape when ISO8601 with a 'T' fails.
-    private static func parseSpaceTime(_ s: String) -> Date? {
+    /// Report times arrive as "2026-07-11T00:20:00.000Z" (fractional seconds) —
+    /// which the default ISO8601 formatter REJECTS — or occasionally as
+    /// "2026-07-11 00:00:00" (space, UTC). Try all three; a station whose time
+    /// won't parse is dropped rather than dated to 1970 and wrongly called stale.
+    static func parseTime(_ s: String) -> Date? {
+        if let d = isoFractional.date(from: s) { return d }
+        if let d = isoPlain.date(from: s) { return d }
+        return spaceTime.date(from: s)
+    }
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
+    private static let isoPlain = ISO8601DateFormatter()
+    private static let spaceTime: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = TimeZone(identifier: "UTC")
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return f.date(from: s)
-    }
+        return f
+    }()
 
     /// The closest station that is both near enough and fresh enough to be a
     /// meaningful truth. A stale or far report is worse than no truth at all —
