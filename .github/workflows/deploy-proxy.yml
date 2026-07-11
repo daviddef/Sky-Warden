@@ -57,10 +57,12 @@ jobs:
           [ -n "$GNEWS_API_KEY" ]       && ARGS+=(GNEWS_API_KEY="$GNEWS_API_KEY")
           supabase secrets set --project-ref "$PROJECT_REF" "${ARGS[@]}"
 
-      - name: Deploy function
+      - name: Deploy functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy weather --project-ref "$PROJECT_REF" --no-verify-jwt
+        run: |
+          supabase functions deploy weather --project-ref "$PROJECT_REF" --no-verify-jwt
+          supabase functions deploy ledger  --project-ref "$PROJECT_REF" --no-verify-jwt
 
       - name: Where to point the app
         run: |

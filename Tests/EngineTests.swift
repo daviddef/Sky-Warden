@@ -916,6 +916,71 @@ final class SkillEngagementTests: XCTestCase {
         let expected = (20 * 0.5 + 22 * 0.3 + 24 * meanW) / (0.5 + 0.3 + meanW)
         XCTAssertEqual(result, expected, accuracy: 0.001)
     }
+
+    // MARK: Pooling across devices
+
+    /// Merging two devices' scoreboards is exactly summing their counts and
+    /// errors — the mean absolute error of the union, not an average of averages.
+    func testMergingScoreboardsSumsCountsAndErrors() {
+        let a = ["ecmwf|temp": SkillStat(count: 10, sumAbsError: 20)]   // MAE 2.0
+        let b = ["ecmwf|temp": SkillStat(count: 30, sumAbsError: 30)]   // MAE 1.0
+        let m = SkillTable.mergeScoreboards(a, b)["ecmwf|temp"]!
+        XCTAssertEqual(m.count, 40)
+        XCTAssertEqual(m.sumAbsError, 50, accuracy: 0.001)
+        XCTAssertEqual(m.mae, 50.0 / 40.0, accuracy: 0.001, "the pooled MAE, not (2+1)/2")
+    }
+
+    /// The pool must reach a decision from the fleet even when no single device
+    /// has enough samples on its own. Two devices with half the minimum each,
+    /// pooled, clear the bar; neither does alone.
+    func testPoolingLetsAGridEarnWeightsNoSingleDeviceCould() {
+        let half = SkillTable.minSamples / 2 + 1
+        let deviceA = trained2([.ecmwf: (1, half), .gfs: (2, half)])
+        let deviceB = trained2([.ecmwf: (1, half), .gfs: (2, half)])
+
+        XCTAssertNil(SkillTable.weights(for: .temp, among: [.ecmwf, .gfs], stats: deviceA),
+                     "one device alone has not earned it")
+
+        let pooled = SkillTable.mergeScoreboards(deviceA, deviceB)
+        let w = SkillTable.weights(for: .temp, among: [.ecmwf, .gfs], stats: pooled)
+        XCTAssertNotNil(w, "the fleet, pooled, has")
+        XCTAssertGreaterThan(w![.ecmwf]!, w![.gfs]!, "the more accurate source still wins")
+    }
+
+    /// The delta is what has NOT yet been sent, so a second contribution after a
+    /// successful sync is empty — the pool is never told the same sample twice.
+    func testDeltaExcludesAlreadyContributedSamplesSoThePoolNeverDoubleCounts() {
+        let contributed = ["ecmwf|temp": SkillStat(count: 20, sumAbsError: 40)]
+        let current     = ["ecmwf|temp": SkillStat(count: 25, sumAbsError: 47)]
+
+        let d = SkillTable.delta(current: current, contributed: contributed)["ecmwf|temp"]!
+        XCTAssertEqual(d.count, 5, "only the five new samples")
+        XCTAssertEqual(d.sumAbsError, 7, accuracy: 0.001)
+
+        // After syncing, contributed catches up to current: nothing left to send.
+        XCTAssertTrue(SkillTable.delta(current: current, contributed: current).isEmpty)
+    }
+
+    /// The 2× cap and the all-must-clear-minSamples guard are properties of the
+    /// weighting, so they hold on pooled stats exactly as on one device's.
+    func testCapStillBindsOnPooledStats() {
+        // ecmwf near-perfect, two rivals poor — the cap must stop ecmwf running away.
+        let pooled = SkillTable.mergeScoreboards(
+            trained2([.ecmwf: (0, SkillTable.minSamples), .gfs: (8, SkillTable.minSamples), .icon: (8, SkillTable.minSamples)]),
+            [:])
+        let w = SkillTable.weights(for: .temp, among: [.ecmwf, .gfs, .icon], stats: pooled)!
+        let cap = SkillTable.weightCapMultiple / 3.0
+        XCTAssertLessThanOrEqual(w[.ecmwf]!, cap + 1e-9, "no source exceeds twice an equal share, pooled or not")
+    }
+
+    /// Builds a scoreboard directly: source → (MAE it should show, sample count).
+    private func trained2(_ spec: [WeatherSource: (mae: Double, samples: Int)]) -> [String: SkillStat] {
+        var out: [String: SkillStat] = [:]
+        for (src, s) in spec {
+            out["\(src.rawValue)|temp"] = SkillStat(count: s.samples, sumAbsError: s.mae * Double(s.samples))
+        }
+        return out
+    }
 }
 
 // MARK: - Arc dial value scale

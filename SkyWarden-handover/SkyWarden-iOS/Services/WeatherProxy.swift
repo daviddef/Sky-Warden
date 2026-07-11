@@ -11,6 +11,14 @@ enum WeatherProxy {
     static var appToken: String { info("PROXY_APP_TOKEN") }
     static var isEnabled: Bool { !baseURL.isEmpty }
 
+    /// The pooled-ledger endpoint, derived from the proxy base by swapping the
+    /// trailing path component (…/functions/v1/weather → …/functions/v1/ledger).
+    /// Empty when the proxy is off, so the pool is simply skipped in direct mode.
+    static var ledgerURL: URL? {
+        guard isEnabled, let u = URL(string: baseURL) else { return nil }
+        return u.deletingLastPathComponent().appendingPathComponent("ledger")
+    }
+
     private static func info(_ key: String) -> String {
         (Bundle.main.object(forInfoDictionaryKey: key) as? String) ?? ""
     }

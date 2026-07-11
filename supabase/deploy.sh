@@ -46,12 +46,14 @@ if [[ -z "$APP" ]]; then APP=$(openssl rand -hex 24); fi
 echo "▸ Linking project $REF …"
 supabase link --project-ref "$REF"
 
-# NOTE: `supabase db push` applies the migration but needs the DATABASE password
+# NOTE: `supabase db push` applies the migrations but needs the DATABASE password
 # (interactive), which a token-only login doesn't have. If you know it, run:
 #     supabase db push
-# Otherwise create the cache table once from the dashboard SQL editor by pasting
-# supabase/migrations/0001_weather_cache.sql. The function works uncached until
-# then. (This repo's initial deploy created the table via a one-shot function.)
+# Otherwise create the tables once from the dashboard SQL editor by pasting, in
+# order, supabase/migrations/0001_weather_cache.sql then 0002_ledger.sql. The
+# weather function works uncached until 0001 is applied; the ledger function
+# needs 0002 (the ledger table + ledger_add RPC) before it will store anything —
+# without it the app simply falls back to each device's own accuracy scoreboard.
 
 echo "▸ Setting server-side secrets …"
 SECRETS=(SKYWARDEN_APP_TOKEN="$APP")
@@ -60,8 +62,9 @@ SECRETS=(SKYWARDEN_APP_TOKEN="$APP")
 [[ -n "$GN" ]] && SECRETS+=(GNEWS_API_KEY="$GN")
 supabase secrets set "${SECRETS[@]}"
 
-echo "▸ Deploying the function …"
+echo "▸ Deploying the functions …"
 supabase functions deploy weather --no-verify-jwt
+supabase functions deploy ledger  --no-verify-jwt   # pooled accuracy scoreboard
 
 BASE="https://$REF.supabase.co/functions/v1/weather"
 # xcconfig treats // as a comment, so a raw https:// URL is silently truncated

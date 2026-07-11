@@ -97,6 +97,13 @@ final class WeatherAggregator: ObservableObject {
                 truth = await METARService().observation(near: location)?.truth
             }
             SkillLedger.shared.update(with: readings, truth: truth, location: location)
+            // Push whatever new samples that scoring produced to the pool, then pull
+            // the fleet's latest scoreboard for next refresh's weighting. Both are
+            // off the critical path and best-effort — the pool changes slowly, so a
+            // one-refresh lag costs nothing, and a failure just falls back to this
+            // device's own samples.
+            await SkillLedger.shared.contribute(location: location)
+            await SkillLedger.shared.syncPooled(location: location)
         }
     }
 

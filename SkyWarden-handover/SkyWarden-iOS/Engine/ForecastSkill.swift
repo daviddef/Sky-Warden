@@ -209,11 +209,23 @@ struct SkillTable: Codable, Equatable {
     /// which is a statement about our data, not about the forecast.
     func weights(for metric: SkillMetric, among sources: [WeatherSource],
                  minSamples: Int = SkillTable.minSamples) -> [WeatherSource: Double]? {
+        Self.weights(for: metric, among: sources, stats: stats, minSamples: minSamples)
+    }
+
+    /// The same weighting, over an arbitrary scoreboard rather than this table's
+    /// own. The pooled ledger passes the summed stats from every device here, so
+    /// a grid reaches `minSamples` — and earns weighting — from the whole fleet's
+    /// observations, not one device's. Because the stats are still counts of real
+    /// observation-scored errors, every invariant (min-samples, the 2× cap, truth
+    /// is an observation) holds unchanged on the pooled numbers.
+    static func weights(for metric: SkillMetric, among sources: [WeatherSource],
+                        stats: [String: SkillStat],
+                        minSamples: Int = SkillTable.minSamples) -> [WeatherSource: Double]? {
         guard sources.count >= 2 else { return nil }
         var raw: [WeatherSource: Double] = [:]
         for s in sources {
-            guard samples(s, metric) >= minSamples, let e = mae(s, metric) else { return nil }
-            raw[s] = 1 / (e + 0.1)     // ε keeps a perfect record from dividing by zero
+            guard let stat = stats[key(s.rawValue, metric)], stat.count >= minSamples else { return nil }
+            raw[s] = 1 / (stat.mae + 0.1)     // ε keeps a perfect record from dividing by zero
         }
         let total = raw.values.reduce(0, +)
         guard total > 0 else { return nil }
@@ -237,6 +249,45 @@ struct SkillTable: Codable, Equatable {
             for (k, v) in under { w[k] = v + excess * (v / underTotal) }
         }
         return w
+    }
+
+    // MARK: Pooling across devices
+
+    /// This table's raw scoreboard, keyed `source|metric`. The pool contributes
+    /// and reads exactly these numbers — nothing about a device or a user, only
+    /// how wrong each source has been on a ~55 km grid.
+    var scoreboard: [String: SkillStat] { stats }
+
+    /// Combine two scoreboards by summing counts and errors. `SkillStat` is a
+    /// commutative monoid under (count+count, sumAbsError+sumAbsError): the merged
+    /// stat is exactly what one device would hold had it made every observation
+    /// itself. That is why pooling is sound — it adds real samples, it does not
+    /// average away or double-count anyone.
+    static func mergeScoreboards(_ a: [String: SkillStat], _ b: [String: SkillStat]) -> [String: SkillStat] {
+        var out = a
+        for (k, s) in b {
+            var cur = out[k] ?? SkillStat()
+            cur.count += s.count
+            cur.sumAbsError += s.sumAbsError
+            out[k] = cur
+        }
+        return out
+    }
+
+    /// The samples this device has accumulated *beyond* what it has already sent
+    /// to the pool — the delta to contribute. Never negative: `contributed` is a
+    /// prior snapshot of the same counters, which only ever grow. Guarding on the
+    /// count `> 0` keeps a device from re-sending, and thus double-counting, work
+    /// the pool already holds.
+    static func delta(current: [String: SkillStat], contributed: [String: SkillStat]) -> [String: SkillStat] {
+        var out: [String: SkillStat] = [:]
+        for (k, cur) in current {
+            let base = contributed[k] ?? SkillStat()
+            let dCount = cur.count - base.count
+            guard dCount > 0 else { continue }
+            out[k] = SkillStat(count: dCount, sumAbsError: cur.sumAbsError - base.sumAbsError)
+        }
+        return out
     }
 }
 
