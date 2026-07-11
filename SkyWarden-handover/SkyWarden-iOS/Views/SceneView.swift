@@ -186,7 +186,13 @@ struct SceneView: View {
                         .init(color: sunColor.opacity(0.35), location: 0.45),
                         .init(color: sunColor.opacity(0), location: 1)]),
                         center: CGPoint(x: sunX, y: sunY), startRadius: 0, endRadius: glowR))
-            ctx.fill(circle(CGPoint(x: sunX, y: sunY), sun == "high" ? 24 : 30), with: .color(sunColor))
+            // A bright core fading to the sun's own colour reads rounder and hotter
+            // than a flat disk.
+            let sunR: CGFloat = sun == "high" ? 24 : 30
+            ctx.fill(circle(CGPoint(x: sunX, y: sunY), sunR),
+                     with: .radialGradient(Gradient(colors: [.white, sunColor, sunColor]),
+                        center: CGPoint(x: sunX - sunR * 0.25, y: sunY - sunR * 0.25),
+                        startRadius: 0, endRadius: sunR * 1.15))
         }
         if isNight {
             ctx.fill(circle(CGPoint(x: 278, y: 54), 22),
@@ -198,22 +204,28 @@ struct SceneView: View {
             }
         }
 
-        // Clouds
+        // Clouds — drawn into a softly blurred layer so their edges read as
+        // volumetric vapour rather than stacked hard ellipses. Tinted by the sky so
+        // dawn/dusk clouds catch warm light and night clouds go slate.
+        let cloudLight: Color = isNight ? .hx("39465F") : isDawnDusk ? .hx("F3D2C0") : .white
         let cloudCount = Int((2 + cloudCover * 4).rounded())
-        for i in 0..<max(0, cloudCount) {
-            let cx = 36 + Double(i) * 74 + Double(i % 3) * 14
-            let cy = 42 + Double((i * 31) % 36)
-            let sc = 0.75 + Double((i * 17) % 6) / 10
-            let op = 0.5 + cloudCover * 0.45
-            func lobe(_ ex: Double, _ ey: Double, _ rx: Double, _ ry: Double, _ color: Color, _ o: Double) {
-                ctx.fill(ellipse(CGPoint(x: cx + ex * sc, y: cy + ey * sc), rx * sc, ry * sc),
-                         with: .color(color.opacity(o)))
+        ctx.drawLayer { layer in
+            layer.addFilter(.blur(radius: 3.2))
+            for i in 0..<max(0, cloudCount) {
+                let cx = 36 + Double(i) * 74 + Double(i % 3) * 14
+                let cy = 42 + Double((i * 31) % 36)
+                let sc = 0.75 + Double((i * 17) % 6) / 10
+                let op = 0.5 + cloudCover * 0.45
+                func lobe(_ ex: Double, _ ey: Double, _ rx: Double, _ ry: Double, _ color: Color, _ o: Double) {
+                    layer.fill(ellipse(CGPoint(x: cx + ex * sc, y: cy + ey * sc), rx * sc, ry * sc),
+                               with: .color(color.opacity(o)))
+                }
+                lobe(2, 6, 32, 14, .hx(isNight ? "060E1C" : "5A6B85"), op * 0.22) // underside shadow
+                lobe(0, 0, 28, 13, cloudLight, op)
+                lobe(20, -5, 19, 11, cloudLight, op)
+                lobe(-18, 1, 17, 10, cloudLight, op)
+                lobe(6, -9, 14, 9, cloudLight, op)
             }
-            lobe(2, 4, 30, 13, .hx("0A1830"), op * 0.18)
-            lobe(0, 0, 28, 13, .white, op)
-            lobe(20, -5, 19, 11, .white, op)
-            lobe(-18, 1, 17, 10, .white, op)
-            lobe(6, -9, 14, 9, .white, op)
         }
 
         // Seagulls
