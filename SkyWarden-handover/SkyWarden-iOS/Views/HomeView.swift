@@ -4,6 +4,7 @@
 
 import SwiftUI
 import CoreLocation
+import EventKit
 
 struct HomeView: View {
     let consensus: ConsensusWeather
@@ -12,12 +13,15 @@ struct HomeView: View {
     let placeName: String?
     var tideDay: TideDay? = nil
     var moonData: MoonData? = nil
+    var region: String? = nil
+    var countryCode: String? = nil
     /// Lets the summary grid jump straight to the tab it summarises.
     var onOpenTab: ((ContentView.Tab) -> Void)? = nil
 
     @State private var selectedMetric: ComfortMetric?
     @State private var onThisDay: OnThisDay?
     @State private var warnings: [WeatherWarning] = []
+    @StateObject private var signals = HomeSignals()
     @AppStorage("display.nowSimple") private var simpleMode = true
     @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
 
@@ -46,6 +50,14 @@ struct HomeView: View {
 
                 modeToggle.padding(.horizontal, 16).padding(.top, 12)
 
+                // Ambient signals both modes share: a calendar event the weather
+                // threatens, the next tide, the moon, a sky event coming up, a
+                // serious weather story. Each shows only when it has something to say.
+                SignalsStrip(calendarEvents: signals.calendarEvents, tideDay: tideDay,
+                             moonData: moonData, astro: signals.astro, news: signals.news,
+                             onOpenTab: onOpenTab)
+                    .padding(.top, 10)
+
                 if simpleMode {
                     SimpleNowView(consensus: consensus, failedSources: failedSources,
                                   confidence: confidence, placeName: placeName,
@@ -60,6 +72,10 @@ struct HomeView: View {
             }
             .task(id: location.coordinate.latitude) {
                 warnings = await WarningsService().warnings(near: location)
+            }
+            .task(id: location.coordinate.latitude) {
+                await signals.load(location: location, region: region, country: countryCode,
+                                   forecast: consensus.dailyForecast)
             }
         }
     }
@@ -374,5 +390,131 @@ struct SectionHeader: View {
         Label(title, systemImage: icon)
             .font(SkyType.sectionHead).foregroundColor(Sky.muted)
             .textCase(.uppercase).kerning(0.8)
+    }
+}
+
+// MARK: - Home signals
+
+/// The "worth-knowing" things that don't have a number on the dial but change your
+/// day: a calendar event the weather threatens, a rare sky event coming up, a
+/// serious weather story. Tide and moon come straight from the aggregator; these
+/// three are fetched here, best-effort and off the critical path.
+@MainActor
+final class HomeSignals: ObservableObject {
+    @Published var astro: AstroEvent?
+    @Published var news: WeatherNewsItem?
+    @Published var calendarEvents: [WeatherEvent] = []
+
+    private let calendar = CalendarWeatherManager()
+    private var lastKey = ""
+
+    func load(location: CLLocation, region: String?, country: String?,
+              forecast: [ConsensusDaily]) async {
+        // Refetch only when the ~5 km grid cell changes, not on every redraw.
+        let key = "\(Int(location.coordinate.latitude * 20)),\(Int(location.coordinate.longitude * 20))"
+        guard key != lastKey else { return }
+        lastKey = key
+
+        // Sky: the soonest notable event in the next month.
+        let events = await AstroService().upcomingEvents(near: location, months: 2)
+        astro = events.first { $0.daysUntil <= 30 }
+
+        // News: the most serious weather story — only if it's actually serious.
+        let stories = await WeatherNewsService().fetchLocalNews(
+            location: location, region: region, countryCode: country)
+        news = stories.first { $0.impact == .high } ?? stories.first { $0.impact == .medium }
+
+        // Calendar: only when the user has already granted access — never prompt
+        // from the home screen. Keep events the forecast genuinely threatens.
+        if EKEventStore.authorizationStatus(for: .event) == .fullAccess {
+            await calendar.analyse(forecast: forecast)
+            calendarEvents = calendar.weatherEvents.filter { $0.impact >= .watch }
+        }
+    }
+}
+
+/// A horizontal run of signal chips, each shown only when it has something to say,
+/// each a tap into the tab that owns it. Deliberately quiet — this is peripheral
+/// awareness, not the main event.
+struct SignalsStrip: View {
+    let calendarEvents: [WeatherEvent]
+    let tideDay: TideDay?
+    let moonData: MoonData?
+    let astro: AstroEvent?
+    let news: WeatherNewsItem?
+    let onOpenTab: ((ContentView.Tab) -> Void)?
+
+    private struct Chip: Identifiable {
+        let id = UUID()
+        let emoji: String; let text: String; let color: Color; let tab: ContentView.Tab
+    }
+
+    var body: some View {
+        let chips = buildChips()
+        if !chips.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(chips) { c in
+                        Button { onOpenTab?(c.tab) } label: {
+                            HStack(spacing: 5) {
+                                Text(c.emoji).font(.system(size: 12))
+                                Text(c.text).font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Sky.white).lineLimit(1)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(c.color.opacity(0.16))
+                            .overlay(Capsule().stroke(c.color.opacity(0.45), lineWidth: 1))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private func buildChips() -> [Chip] {
+        var out: [Chip] = []
+
+        // Calendar interruptions — worst first (analyse already sorts).
+        if let worst = calendarEvents.first {
+            let text = calendarEvents.count == 1
+                ? short(worst.title, 20)
+                : "\(calendarEvents.count) events at risk"
+            out.append(Chip(emoji: "📅", text: text,
+                            color: worst.impact == .major ? Sky.red : Sky.amber, tab: .plans))
+        }
+
+        // Next tide.
+        if let next = tideDay?.events.first(where: { $0.time > Date() }) {
+            out.append(Chip(emoji: "🌊", text: "\(next.type.rawValue) \(next.timeDisplay)",
+                            color: Sky.tide, tab: .tides))
+        }
+
+        // Moon.
+        if let m = moonData {
+            let text = m.daysToFull <= 1 ? "Full moon" : "\(m.illuminationPercent)% lit"
+            out.append(Chip(emoji: m.phase.emoji, text: text, color: Sky.muted, tab: .sky))
+        }
+
+        // Sky alert — a notable event coming up soon.
+        if let a = astro {
+            let when = a.daysUntil == 0 ? "tonight" : "\(a.daysUntil)d"
+            out.append(Chip(emoji: a.type.emoji, text: "\(short(a.title, 16)) \(when)",
+                            color: Sky.wind, tab: .sky))
+        }
+
+        // Serious weather news.
+        if let n = news {
+            out.append(Chip(emoji: "📰", text: short(n.headline, 24),
+                            color: n.impact == .high ? Sky.red : Sky.amber, tab: .news))
+        }
+
+        return out
+    }
+
+    private func short(_ s: String, _ n: Int) -> String {
+        s.count <= n ? s : String(s.prefix(n - 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
 }

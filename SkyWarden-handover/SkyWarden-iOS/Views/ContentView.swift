@@ -92,6 +92,7 @@ struct ContentView: View {
             HomeView(consensus: consensus, failedSources: aggregator.failedSources,
                      location: location, placeName: locationManager.placeName,
                      tideDay: aggregator.tideDay, moonData: aggregator.moonData,
+                     region: locationManager.region, countryCode: locationManager.countryCode,
                      onOpenTab: { selectedTab = $0 })
         case .scene:
             SceneView(consensus: consensus, tideDay: aggregator.tideDay)
