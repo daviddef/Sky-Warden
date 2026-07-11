@@ -30,27 +30,30 @@ struct WeatherMapView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                if let spec, !frames.isEmpty {
+            ZStack(alignment: .topLeading) {
+                // Render the base map the instant we have a spec — centred on you,
+                // before any radar tiles arrive — so the tab never shows a blank
+                // panel. The radar frames fade in on top as they warm.
+                if let spec {
                     MapCanvas(center: location.coordinate, spec: spec, frames: frames, index: index,
                               onRegionSettled: warm)
                         .ignoresSafeArea(edges: .horizontal)
-                        .id(layer)          // a new layer means a new camera, so rebuild the map
                 } else {
                     Rectangle().fill(Sky.surface)
                 }
 
-                if loading || warming {
-                    VStack(spacing: 10) {
-                        ProgressView().tint(Sky.tide)
-                        Text(loading ? "Finding the latest imagery…" : "Loading radar…")
-                            .font(.system(size: 11)).foregroundColor(Sky.muted)
+                // A subtle pill, not a blocking card — the map is already up behind it.
+                if (loading || warming) && !unavailable {
+                    HStack(spacing: 7) {
+                        ProgressView().tint(Sky.tide).scaleEffect(0.68)
+                        Text(frames.isEmpty ? "Finding radar…" : "Sharpening…")
+                            .font(.system(size: 11, weight: .medium)).foregroundColor(Sky.white)
                     }
-                    .padding(16)
-                    .background(Sky.card.opacity(0.86))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 11).padding(.vertical, 7)
+                    .background(.ultraThinMaterial).clipShape(Capsule())
+                    .padding(12)
                 } else if unavailable {
-                    unavailableCard
+                    unavailableCard.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
                 VStack {
