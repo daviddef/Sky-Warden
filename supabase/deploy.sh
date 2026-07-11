@@ -64,11 +64,17 @@ echo "▸ Deploying the function …"
 supabase functions deploy weather --no-verify-jwt
 
 BASE="https://$REF.supabase.co/functions/v1/weather"
+# xcconfig treats // as a comment, so a raw https:// URL is silently truncated
+# to "https:". Break the // with an empty $() so it expands back to https://.
+ESCAPED="https:/\$()/$REF.supabase.co/functions/v1/weather"
 echo
 echo "✅ Deployed. Put these in $CONFIG and rebuild:"
 echo
-echo "   PROXY_BASE_URL   = $BASE"
+echo "   PROXY_BASE_URL   = $ESCAPED"
 echo "   PROXY_APP_TOKEN  = $APP"
+echo
+echo "   (the \$() is required — xcconfig reads // as a comment and would"
+echo "    otherwise truncate the URL to 'https:', breaking every proxied call.)"
 echo
 echo "Then verify (MISS first call, HIT within 15 min):"
 echo "   curl -s \"$BASE?source=openmeteo&latitude=-27.87&longitude=153.35&hourly=temperature_2m\" \\"

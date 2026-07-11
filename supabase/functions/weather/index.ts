@@ -57,16 +57,21 @@ Deno.serve(async (req) => {
     }
 
     // News is a text search with no coordinates; the weather providers are
-    // location-based. Cache-key each by what actually varies its result.
+    // location-based. The cache key must include EVERY param that changes the
+    // upstream result — models, hourly, forecast_days, … — not a hardcoded few,
+    // or different requests at one grid cell collide and one gets the other's
+    // cached payload (which silently broke the multi-model forecast).
     const lat = url.searchParams.get("latitude") ?? url.searchParams.get("lat");
     const lon = url.searchParams.get("longitude") ?? url.searchParams.get("lon");
-    const extra = ["days", "start_date", "end_date", "q", "lang", "country"]
-      .map((k) => url.searchParams.get(k)).filter(Boolean).join("|");
+    const skip = new Set(["source", "latitude", "longitude", "lat", "lon", "appid", "key", "apikey"]);
+    const extra = [...url.searchParams.entries()]
+      .filter(([k]) => !skip.has(k))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`).join("&");
 
     let key: string;
     if (source === "gnews") {
-      const q = url.searchParams.get("q");
-      if (!q) return json({ error: "q required" }, 400);
+      if (!url.searchParams.get("q")) return json({ error: "q required" }, 400);
       key = `gnews:${extra}`;
     } else {
       if (lat === null || lon === null) return json({ error: "lat/lon required" }, 400);

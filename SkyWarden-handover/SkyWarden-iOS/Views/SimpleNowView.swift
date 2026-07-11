@@ -197,22 +197,24 @@ private struct FlowChips: View {
 
 // MARK: - Intraday timeline
 
-/// One shared morning→night axis with rain / wind / UV as ramp-coloured bars,
-/// each hour a segment tinted by that metric's comfort, and the peak marked.
+/// One shared morning→night axis. Temperature leads (it's the headline), then
+/// rain / wind / UV. Each hour is a segment tinted by that metric's comfort, and
+/// the peak hour is marked and labelled.
 private struct IntradayTimeline: View {
     let hourly: [ConsensusHourly]
 
-    private struct Row { let label: String; let metric: ComfortMetric; let values: [(Date, Double?)] }
+    private struct Row { let label: String; let metric: ComfortMetric; let icon: String; let values: [(Date, Double?)] }
 
     var body: some View {
         let window = Array(hourly.prefix(14))
         if window.count >= 3 {
             let rows = [
-                Row(label: "Rain", metric: .rain, values: window.map { ($0.time, $0.rainProbability) }),
-                Row(label: "Wind", metric: .wind, values: window.map { ($0.time, $0.windSpeed) }),
-                Row(label: "UV",   metric: .uv,   values: window.map { ($0.time, $0.uvIndex) }),
+                Row(label: "Temp", metric: .temp, icon: "🌡", values: window.map { ($0.time, $0.temperature) }),
+                Row(label: "Rain", metric: .rain, icon: "💧", values: window.map { ($0.time, $0.rainProbability) }),
+                Row(label: "Wind", metric: .wind, icon: "💨", values: window.map { ($0.time, $0.windSpeed) }),
+                Row(label: "UV",   metric: .uv,   icon: "☀️", values: window.map { ($0.time, $0.uvIndex) }),
             ]
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in bar(row, window: window) }
                 axis(window)
             }
@@ -223,36 +225,53 @@ private struct IntradayTimeline: View {
 
     private func bar(_ row: Row, window: [ConsensusHourly]) -> some View {
         let peak = IntradayPeak.of(row.metric, hourly: hourly)
+        // The right-hand callout: the peak's VALUE and time, or the current
+        // reading when nothing peaks — so every row says something concrete.
+        let callout: String
+        if let peak {
+            callout = "\(row.metric.format(peak.value)) \(IntradayPeak.hourLabel(peak.time))"
+        } else if let first = row.values.first?.1 {
+            callout = row.metric.format(first)
+        } else {
+            callout = "—"
+        }
         return HStack(spacing: 8) {
-            Text(row.label).font(.system(size: 10, weight: .medium)).foregroundColor(Sky.muted)
-                .frame(width: 30, alignment: .leading)
+            HStack(spacing: 4) {
+                Text(row.icon).font(.system(size: 12))
+                Text(row.label).font(.system(size: 11, weight: .semibold)).foregroundColor(Sky.text)
+            }
+            .frame(width: 54, alignment: .leading)
+
             GeometryReader { geo in
                 let w = geo.size.width / CGFloat(row.values.count)
                 ZStack(alignment: .leading) {
-                    HStack(spacing: 1) {
+                    HStack(spacing: 1.5) {
                         ForEach(Array(row.values.enumerated()), id: \.offset) { _, v in
-                            RoundedRectangle(cornerRadius: 1.5)
+                            RoundedRectangle(cornerRadius: 2)
                                 .fill(segmentColor(row.metric, v.1))
-                                .frame(height: 14)
+                                .frame(height: 18)
                         }
                     }
                     if let peak, let i = window.firstIndex(where: { $0.time == peak.time }) {
-                        // A tick over the peak hour.
-                        Rectangle().fill(Sky.white).frame(width: 1.5, height: 18)
-                            .offset(x: (CGFloat(i) + 0.5) * w - 0.75)
+                        // A capped marker over the peak hour, so it reads clearly.
+                        Capsule().fill(Sky.white)
+                            .frame(width: 2.5, height: 24)
+                            .offset(x: (CGFloat(i) + 0.5) * w - 1.25)
                     }
                 }
             }
-            .frame(height: 18)
-            Text(peak.map { IntradayPeak.hourLabel($0.time) } ?? "—")
-                .font(.system(size: 9)).foregroundColor(Sky.muted)
-                .frame(width: 42, alignment: .trailing)
+            .frame(height: 24)
+
+            Text(callout)
+                .font(.system(size: 10, weight: .medium)).foregroundColor(peak == nil ? Sky.muted : Sky.text)
+                .frame(width: 58, alignment: .trailing).lineLimit(1).minimumScaleFactor(0.8)
         }
     }
 
     private func segmentColor(_ metric: ComfortMetric, _ value: Double?) -> Color {
         guard let value else { return Sky.surface.opacity(0.4) }
-        return Comfort.comfortColor(metric.score(value)).opacity(0.85)
+        // A touch more saturated than before so the shape reads at a glance.
+        return Comfort.comfortColor(metric.score(value)).opacity(0.95)
     }
 
     private func axis(_ window: [ConsensusHourly]) -> some View {
@@ -263,7 +282,7 @@ private struct IntradayTimeline: View {
             Spacer()
             Text(IntradayPeak.hourLabel(window.last!.time))
         }
-        .font(.system(size: 8.5)).foregroundColor(Sky.muted)
-        .padding(.leading, 38).padding(.trailing, 42)
+        .font(.system(size: 9)).foregroundColor(Sky.muted)
+        .padding(.leading, 62).padding(.trailing, 66)
     }
 }

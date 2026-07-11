@@ -220,6 +220,20 @@ struct RadialDialView: View {
                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [2, 4]))
     }
 
+    /// One line combining today's range and when it peaks — they usually share a
+    /// number ("0–5" and "peaks 5 at 12pm"), so a single line reads far cleaner:
+    /// "0–5 · peaks 12pm". Either half may be absent.
+    static func detailLine(_ r: RingReading) -> String? {
+        let range = r.minMax.map { "\(r.metric.format($0.0))–\(r.metric.format($0.1))" }
+        let peak = r.peak.map { "peaks \(IntradayPeak.hourLabel($0.time))" }
+        switch (range, peak) {
+        case let (rr?, pp?): return "\(rr) · \(pp)"
+        case let (rr?, nil): return rr
+        case let (nil, pp?): return pp
+        default:             return nil
+        }
+    }
+
     // MARK: - Centre readout ("burst open")
 
     @ViewBuilder
@@ -234,12 +248,11 @@ struct RadialDialView: View {
                     .foregroundColor(color)
                 Text(metric.comfortLabel(r.value))
                     .font(.system(size: 11, weight: .semibold)).foregroundColor(color)
-                if let mm = r.minMax {
-                    Text("\(metric.format(mm.0))–\(metric.format(mm.1))")
-                        .font(.system(size: 8.5)).foregroundColor(Sky.muted)
-                }
-                if let peak = r.peak {
-                    Text(peak.phrase).font(.system(size: 8.5, weight: .medium)).foregroundColor(color.opacity(0.9))
+                // Range and peak merged onto ONE legible line so the readout
+                // stays inside the orb and clear of the dashed confidence rim.
+                if let line = RadialDialView.detailLine(r) {
+                    Text(line).font(.system(size: 9, weight: .medium)).foregroundColor(Sky.text.opacity(0.85))
+                        .lineLimit(1).minimumScaleFactor(0.75)
                 }
                 if r.hasFlag {
                     Text("\(r.isMajor ? "🚨" : "⚠️") \(metric.format(r.spread)) apart")

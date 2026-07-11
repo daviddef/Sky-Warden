@@ -64,5 +64,7 @@ jobs:
 
       - name: Where to point the app
         run: |
-          echo "PROXY_BASE_URL  = https://$PROJECT_REF.supabase.co/functions/v1/weather"
+          # NB: the $() escape is required — xcconfig reads // as a comment and
+          # would truncate a raw https:// URL to "https:", breaking every call.
+          echo 'PROXY_BASE_URL  = https:/$()/'"$PROJECT_REF"'.supabase.co/functions/v1/weather'
           echo "PROXY_APP_TOKEN = (the SKYWARDEN_APP_TOKEN secret you set)"
