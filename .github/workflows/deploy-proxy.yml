@@ -1,0 +1,68 @@
+# Sky Warden — deploy the Supabase weather proxy.
+#
+# Manual, one-click. Because deploying needs a Supabase Personal Access Token
+# (which must never be pasted into a chat or committed), this runs in CI where
+# the token lives as an encrypted GitHub secret you set yourself.
+#
+# ONE-TIME: in the repo → Settings → Secrets and variables → Actions, add:
+#   SUPABASE_ACCESS_TOKEN   a Personal Access Token from
+#                           https://supabase.com/dashboard/account/tokens  (sbp_…)
+#   WORLDTIDES_API_KEY      your WorldTides key
+#   OPENWEATHER_API_KEY     your OpenWeather key
+#   GNEWS_API_KEY           (optional) your GNews key
+#   SKYWARDEN_APP_TOKEN     any long random string (the app's proxy token)
+#
+# Then: Actions → "Deploy Supabase proxy" → Run workflow.
+# When it finishes, put these in Config.xcconfig and rebuild:
+#   PROXY_BASE_URL   = https://ikofbvagfjdtyelvhswn.supabase.co/functions/v1/weather
+#   PROXY_APP_TOKEN  = <the SKYWARDEN_APP_TOKEN you set above>
+
+name: Deploy Supabase proxy
+
+on:
+  workflow_dispatch:
+
+env:
+  # The project ref is not a secret — it's in your dashboard URL.
+  PROJECT_REF: ikofbvagfjdtyelvhswn
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Push cache table
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          supabase db push
+
+      - name: Set server-side secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          WORLDTIDES_API_KEY:  ${{ secrets.WORLDTIDES_API_KEY }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          GNEWS_API_KEY:       ${{ secrets.GNEWS_API_KEY }}
+          SKYWARDEN_APP_TOKEN: ${{ secrets.SKYWARDEN_APP_TOKEN }}
+        run: |
+          ARGS=(SKYWARDEN_APP_TOKEN="$SKYWARDEN_APP_TOKEN")
+          [ -n "$WORLDTIDES_API_KEY" ]  && ARGS+=(WORLDTIDES_API_KEY="$WORLDTIDES_API_KEY")
+          [ -n "$OPENWEATHER_API_KEY" ] && ARGS+=(OPENWEATHER_API_KEY="$OPENWEATHER_API_KEY")
+          [ -n "$GNEWS_API_KEY" ]       && ARGS+=(GNEWS_API_KEY="$GNEWS_API_KEY")
+          supabase secrets set --project-ref "$PROJECT_REF" "${ARGS[@]}"
+
+      - name: Deploy function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy weather --project-ref "$PROJECT_REF" --no-verify-jwt
+
+      - name: Where to point the app
+        run: |
+          echo "PROXY_BASE_URL  = https://$PROJECT_REF.supabase.co/functions/v1/weather"
+          echo "PROXY_APP_TOKEN = (the SKYWARDEN_APP_TOKEN secret you set)"
