@@ -23,9 +23,14 @@ struct WeekView: View {
                     .padding(.horizontal, 16).padding(.bottom, 8)
                 }
 
+                // One temperature scale for the whole week, so each day's bar shows
+                // where it sits relative to the others — the week's shape at a glance.
+                let weekLo = daily.map(\.tempMin).min() ?? 0
+                let weekHi = daily.map(\.tempMax).max() ?? 1
+
                 VStack(spacing: 0) {
                     ForEach(Array(daily.enumerated()), id: \.element.id) { (i, day) in
-                        DailyRow(day: day, isFirst: i == 0)
+                        DailyRow(day: day, isFirst: i == 0, weekLo: weekLo, weekHi: weekHi)
                         if i < daily.count - 1 {
                             Divider().background(Sky.surface).padding(.horizontal, 16)
                         }
@@ -46,35 +51,66 @@ struct WeekView: View {
 private struct DailyRow: View {
     let day: ConsensusDaily
     let isFirst: Bool
+    let weekLo: Double
+    let weekHi: Double
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text(day.dayLabel)
                 .font(SkyType.body).fontWeight(isFirst ? .semibold : .regular)
                 .foregroundColor(isFirst ? Sky.white : Sky.text)
-                .frame(width: 44, alignment: .leading)
+                .frame(width: 42, alignment: .leading)
             Image(systemName: day.condition.icon)
-                .font(.system(size: 22)).foregroundColor(Sky.text).frame(width: 28)
+                .font(.system(size: 21)).foregroundColor(Sky.text).frame(width: 26)
             if day.hasDisagreement {
                 Text("⚠️ CHECK").font(.system(size: 9, weight: .bold)).foregroundColor(Sky.amber)
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(Sky.amberBg).clipShape(RoundedRectangle(cornerRadius: 4))
             }
-            Spacer()
+            Spacer(minLength: 4)
             HStack(spacing: 3) {
                 Image(systemName: "drop.fill").font(.system(size: 9))
                     .foregroundColor(day.rainProbability > 40 ? Sky.rain : Sky.muted)
                 Text("\(Int(day.rainProbability.rounded()))%").font(SkyType.caption)
                     .foregroundColor(day.rainProbability > 40 ? Sky.rain : Sky.muted)
             }
-            .frame(width: 44)
-            HStack(spacing: 4) {
-                Text(Units.tempString(day.tempMax)).font(SkyType.body).fontWeight(.medium).foregroundColor(Sky.white)
-                Text(Units.tempString(day.tempMin)).font(SkyType.body).foregroundColor(Sky.muted)
-            }
+            .frame(width: 40, alignment: .trailing)
+
+            // Low → high on a shared week scale, the segment tinted by the comfort
+            // ramp — the same language as the Simple ranges. The high is comfort-
+            // coloured (the headline), the low stays muted.
+            Text(Units.tempString(day.tempMin))
+                .font(SkyType.body).foregroundColor(Sky.muted)
+                .frame(width: 30, alignment: .trailing)
+            tempBar
+                .frame(width: 74, height: 16)
+            Text(Units.tempString(day.tempMax))
+                .font(SkyType.body).fontWeight(.semibold)
+                .foregroundColor(Comfort.comfortColor(ComfortMetric.temp.score(day.tempMax)))
+                .frame(width: 30, alignment: .leading)
         }
         .padding(.horizontal, 16).padding(.vertical, 13)
         .background(isFirst ? Sky.rain.opacity(0.06) : Color.clear)
+    }
+
+    private var tempBar: some View {
+        let span = max(weekHi - weekLo, 1)
+        let x0 = CGFloat((day.tempMin - weekLo) / span)
+        let x1 = CGFloat((day.tempMax - weekLo) / span)
+        return GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(Sky.surface).frame(height: 6)
+                Capsule()
+                    .fill(LinearGradient(
+                        colors: [Comfort.comfortColor(ComfortMetric.temp.score(day.tempMin)),
+                                 Comfort.comfortColor(ComfortMetric.temp.score(day.tempMax))],
+                        startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max((x1 - x0) * w, 6), height: 6)
+                    .offset(x: x0 * w)
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
     }
 }
 
