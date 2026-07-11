@@ -188,6 +188,10 @@ struct HomeView: View {
 
                 pills.padding(.horizontal, 16).padding(.top, 10)
 
+                MostAccurateCard(location: location, sources: consensus.sources,
+                                 onOpen: { onOpenTab?(.sources) })
+                    .padding(.horizontal, 16).padding(.top, 12)
+
                 tabSummary.padding(.horizontal, 16).padding(.top, 12)
 
                 hourly.padding(.top, 12)
@@ -882,5 +886,86 @@ struct FeedbackOverlay: View {
             }.buttonStyle(.plain).disabled(nothingSet)
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
+    }
+}
+
+// MARK: - Most accurate here (the accuracy ledger, surfaced)
+
+/// The moat made visible: which source has actually been closest to the
+/// thermometer *here* lately, and whether we've earned the right to weight it. No
+/// mainstream weather app tells you this — it's the single strongest answer to the
+/// category's #1 complaint (accuracy), grounded in what you can verify out a window.
+struct MostAccurateCard: View {
+    let location: CLLocation
+    let sources: [WeatherSource]
+    let onOpen: () -> Void
+
+    var body: some View {
+        let table = SkillLedger.shared.table(for: location)
+        let forecast = sources.filter { $0.kind == .forecast }
+        let weighted = table.weights(for: .temp, among: forecast) != nil
+        let ranked = forecast
+            .filter { table.samples($0, .temp) >= SkillTable.minSamples }
+            .sorted { (table.mae($0, .temp) ?? .infinity) < (table.mae($1, .temp) ?? .infinity) }
+        let minChecks = forecast.map { table.samples($0, .temp) }.min() ?? 0
+
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Text("🎯 MOST ACCURATE HERE").font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
+                    Spacer()
+                    Text(weighted ? "weighting consensus" : "learning")
+                        .font(.system(size: 9)).foregroundColor(weighted ? Comfort.good : Sky.muted)
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(Sky.muted.opacity(0.6))
+                }
+
+                if weighted, let best = ranked.first, let bestMae = table.mae(best, .temp) {
+                    Text("\(best.rawValue) leads temperature here")
+                        .font(.system(size: 15, weight: .semibold)).foregroundColor(Sky.white)
+                    ForEach(ranked.prefix(3), id: \.self) { s in
+                        bar(s, mae: table.mae(s, .temp) ?? bestMae, best: bestMae, checks: table.samples(s, .temp))
+                    }
+                    Text("Average miss vs the nearest thermometer over the last few weeks. Your consensus leans on whoever's been closest here.")
+                        .font(.system(size: 10)).foregroundColor(Sky.muted).lineSpacing(2)
+                } else {
+                    Text("Learning which source is sharpest here")
+                        .font(.system(size: 14, weight: .semibold)).foregroundColor(Sky.white)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Sky.surface).frame(height: 6)
+                            Capsule().fill(Comfort.good)
+                                .frame(width: geo.size.width *
+                                       min(1, Double(minChecks) / Double(SkillTable.minSamples)), height: 6)
+                        }
+                    }.frame(height: 6)
+                    Text("\(minChecks)/\(SkillTable.minSamples) checks so far. Once every source has been scored against the nearby thermometer, the consensus starts favouring whichever has been closest to reality here.")
+                        .font(.system(size: 10)).foregroundColor(Sky.muted).lineSpacing(2)
+                }
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14)
+                .stroke(Comfort.good.opacity(weighted ? 0.3 : 0), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Source · accuracy bar (fuller = sharper, comfort-ramp coloured) · ±miss.
+    private func bar(_ s: WeatherSource, mae: Double, best: Double, checks: Int) -> some View {
+        let frac = max(0.12, min(1, best / max(mae, 0.01)))
+        return HStack(spacing: 8) {
+            Circle().fill(Color(hex: s.colorHex)).frame(width: 5, height: 5)
+            Text(s.short).font(.system(size: 11)).foregroundColor(Sky.text).frame(width: 40, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Sky.surface).frame(height: 5)
+                    Capsule().fill(Comfort.comfortColor(frac * 2 - 1)).frame(width: geo.size.width * frac, height: 5)
+                }.frame(maxHeight: .infinity, alignment: .center)
+            }.frame(height: 16)
+            Text("±\(String(format: "%.1f", Units.tempDelta(mae)))\(Units.temperature.label)")
+                .font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundColor(Sky.white)
+                .frame(width: 48, alignment: .trailing)
+        }
     }
 }
