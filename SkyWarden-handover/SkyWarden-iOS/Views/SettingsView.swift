@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(DisplayKey.dialStyle)   private var dialStyle       = DialStyle.arc.rawValue
     @AppStorage(DisplayKey.arcFillMode) private var arcFillMode     = ArcFillMode.comfort.rawValue
     @AppStorage(DisplayKey.showRange)   private var showRange       = true
+    @AppStorage(DisplayKey.simpleStyle) private var simpleStyle     = SimpleStyle.bars.rawValue
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -45,6 +46,14 @@ struct SettingsView: View {
                             Divider().background(Sky.surface).padding(.vertical, 4)
                             toggle("Show today's range", $showRange)
                             Text("Marks today's forecast low→high on each ring and in its badge.")
+                                .font(.system(size: 10)).foregroundColor(Sky.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 2)
+
+                            Divider().background(Sky.surface).padding(.vertical, 4)
+                            picker("Simple view", selection: $simpleStyle,
+                                   options: SimpleStyle.allCases.map { ($0.rawValue, $0.title) })
+                            Text(SimpleStyle(rawValue: simpleStyle)?.blurb ?? "")
                                 .font(.system(size: 10)).foregroundColor(Sky.muted)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, 2)

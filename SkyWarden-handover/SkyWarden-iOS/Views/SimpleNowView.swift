@@ -86,13 +86,23 @@ struct SimpleNowView: View {
     }
 
     // MARK: - Timeline
+    @AppStorage(DisplayKey.simpleStyle) private var simpleStyle = SimpleStyle.bars.rawValue
+
     private var timeline: some View {
-        IntradayRanges(hourly: consensus.hourlyForecast, current: [
+        let current: [ComfortMetric: Double] = [
             .temp: consensus.temperature,
             .rain: consensus.rainProbability,
             .wind: consensus.windSpeed,
             .uv:   consensus.uvIndex,
-        ], feelsLike: consensus.feelsLike)
+        ]
+        return Group {
+            if SimpleStyle(rawValue: simpleStyle) == .gauges {
+                IntradayGauges(hourly: consensus.hourlyForecast, current: current)
+            } else {
+                IntradayRanges(hourly: consensus.hourlyForecast, current: current,
+                               feelsLike: consensus.feelsLike)
+            }
+        }
         .padding(.horizontal, 16)
     }
 
@@ -347,5 +357,77 @@ private struct IntradayRanges: View {
         .overlay(Capsule().stroke(c, lineWidth: 2))
         .shadow(color: c.opacity(0.45), radius: 7, y: 2)
         .fixedSize()
+    }
+}
+
+// MARK: - Intraday gauges
+
+/// The same four readings as a 2×2 of 270° gauges (the "Radial" Simple style). Each
+/// arc sweeps from the day's low toward its high, filled to where the current
+/// reading sits and lit in its comfort colour; the reading sits big in the centre,
+/// the low and high tuck under the opening.
+private struct IntradayGauges: View {
+    let hourly: [ConsensusHourly]
+    let current: [ComfortMetric: Double]
+
+    private struct Row { let metric: ComfortMetric; let values: [Double]; let current: Double }
+
+    var body: some View {
+        let window = Array(hourly.prefix(24))
+        let rows: [Row] = window.count >= 3 ? [
+            Row(metric: .temp, values: window.map(\.temperature),    current: current[.temp] ?? 0),
+            Row(metric: .rain, values: window.map(\.rainProbability), current: current[.rain] ?? 0),
+            Row(metric: .wind, values: window.map(\.windSpeed),      current: current[.wind] ?? 0),
+            Row(metric: .uv,   values: window.compactMap(\.uvIndex), current: current[.uv] ?? 0),
+        ].filter { !$0.values.isEmpty } : []
+
+        return Group {
+            if rows.isEmpty {
+                EmptyView()
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
+                                    GridItem(.flexible(), spacing: 12)], spacing: 14) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in gauge(row) }
+                }
+            }
+        }
+    }
+
+    private func gauge(_ row: Row) -> some View {
+        let lo = row.values.min() ?? row.current
+        let hi = row.values.max() ?? row.current
+        let span = hi - lo
+        let t = span > 0.5 ? min(max((row.current - lo) / span, 0), 1) : 0.5
+        let c = Comfort.comfortColor(row.metric.score(row.current))
+
+        return VStack(spacing: 0) {
+            ZStack {
+                // 270° track, gap at the bottom.
+                Circle().trim(from: 0, to: 0.75)
+                    .stroke(Sky.surface, style: StrokeStyle(lineWidth: 9, lineCap: .round))
+                    .rotationEffect(.degrees(135))
+                Circle().trim(from: 0, to: 0.75 * t)
+                    .stroke(c, style: StrokeStyle(lineWidth: 9, lineCap: .round))
+                    .rotationEffect(.degrees(135))
+                    .shadow(color: c.opacity(0.5), radius: 5)
+                VStack(spacing: 1) {
+                    Text(row.metric.emoji).font(.system(size: 13))
+                    Text(row.metric.format(row.current))
+                        .font(.system(size: 25, weight: .bold)).foregroundColor(Sky.white)
+                    Text(row.metric.label)
+                        .font(.system(size: 10, weight: .medium)).foregroundColor(Sky.muted)
+                }
+            }
+            .frame(height: 116)
+            .overlay(alignment: .bottom) {
+                HStack {
+                    Text(row.metric.format(lo)).foregroundColor(Sky.muted)
+                    Spacer()
+                    Text(row.metric.format(hi)).foregroundColor(Sky.muted)
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 26)
+            }
+        }
     }
 }

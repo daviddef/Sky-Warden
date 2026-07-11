@@ -59,10 +59,35 @@ enum ArcFillMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// The Simple view's metric block. Same four readings, same comfort colouring —
+/// just bars or gauges, like the dial, so it's taste not meaning.
+///
+///   .bars    horizontal min→max tracks, the current reading in a lit bubble.
+///   .gauges  a ring per metric, swept min→max and coloured by comfort.
+enum SimpleStyle: String, CaseIterable, Identifiable {
+    case bars, gauges
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bars:   "Bars"
+        case .gauges: "Gauges"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .bars:   "Min→max tracks with the current reading in a bubble."
+        case .gauges: "A ring per metric, swept min→max and coloured by comfort."
+        }
+    }
+}
+
 enum DisplayKey {
     static let dialStyle   = "display.dialStyle"
     static let arcFillMode = "display.arcFillMode"
     static let showRange   = "display.showRange"
+    static let simpleStyle = "display.simpleStyle"
 }
 
 enum Display {
