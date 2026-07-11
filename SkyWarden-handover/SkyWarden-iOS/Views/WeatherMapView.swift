@@ -212,13 +212,11 @@ struct WeatherMapView: View {
         .accessibilityLabel("Radar intensity scale, light to heavy")
     }
 
+    // One map, not three. Users don't distinguish radar / cloud / rainfall — they
+    // want "is it raining and where is it heading". So the layer picker is gone and
+    // the view is always live radar (with the past→forecast nowcast timeline).
     private var controls: some View {
-        VStack(spacing: 8) {
-            Picker("Layer", selection: $layer) {
-                ForEach(WeatherMapLayer.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-
+        VStack(spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "info.circle").font(.system(size: 9))
                 Text(layer.caption)
@@ -230,7 +228,7 @@ struct WeatherMapView: View {
                 .font(.system(size: 9.5)).foregroundColor(Sky.muted.opacity(0.8))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 14)
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 14)
         .background(Sky.navy)
     }
 
