@@ -1157,6 +1157,52 @@ final class WarningGeometryTests: XCTestCase {
         XCTAssertEqual(feats.count, 1, "a GeometryCollection feature must not be dropped")
         XCTAssertTrue(feats[0].area.contains(CLLocationCoordinate2D(latitude: -27.4, longitude: 153.0)))
     }
+
+    // MARK: WA (Emergency WA) bespoke envelope
+
+    /// WA is `{ warnings: [ … ] }` with each warning's fields at the top level and
+    /// its geometry nested under `geo-source`. The decoder must flatten that so the
+    /// warning object becomes the property bag and its geo-source polygon the area.
+    func testDecodesWAWarningsEnvelope() {
+        let json = """
+        {"warnings":[
+          {"id":"wa123","title":"MONITOR CONDITIONS - PERTH","warning-type":"Bushfire Advice",
+           "cap-category":"Fire","action-statement":"Monitor conditions",
+           "published-date-time":"2026-07-10T15:27:01.210+08:00",
+           "geo-source":{"features":[
+             {"geometry":{"type":"Polygon","coordinates":[[[115.7,-32.0],[116.1,-32.0],[116.1,-31.8],[115.7,-31.8],[115.7,-32.0]]]}}]}}
+        ]}
+        """.data(using: .utf8)!
+        let feats = GeoFeature.decodeWA(json)!
+        XCTAssertEqual(feats.count, 1)
+        XCTAssertEqual(feats[0].id, "wa123")
+        XCTAssertEqual(feats[0].string("warning-type"), "Bushfire Advice")
+        XCTAssertTrue(feats[0].area.contains(CLLocationCoordinate2D(latitude: -31.9, longitude: 115.9)),
+                      "someone inside the WA polygon is covered")
+        XCTAssertFalse(feats[0].area.contains(CLLocationCoordinate2D(latitude: -27.4, longitude: 153.0)),
+                       "a Queenslander is not")
+    }
+
+    /// A WA warning with no polygon still surfaces, as a radius around its point,
+    /// rather than being silently dropped.
+    func testWAFallsBackToLocationPointWhenNoPolygon() {
+        let json = """
+        {"warnings":[
+          {"id":"wa9","title":"ADVICE","location":{"latitude":-31.95,"longitude":115.86}}
+        ]}
+        """.data(using: .utf8)!
+        let feats = GeoFeature.decodeWA(json)!
+        XCTAssertEqual(feats.count, 1)
+        XCTAssertTrue(feats[0].area.contains(CLLocationCoordinate2D(latitude: -31.95, longitude: 115.86)))
+    }
+
+    /// "Bushfire Advice/Watch and Act/Emergency Warning" must map to the right
+    /// severity — the substring match keys off the level word inside the type.
+    func testWAWarningTypeMapsToSeverity() {
+        XCTAssertEqual(WarningSeverity.from("Bushfire Advice"), .advice)
+        XCTAssertEqual(WarningSeverity.from("Bushfire Watch and Act"), .watchAndAct)
+        XCTAssertEqual(WarningSeverity.from("Bushfire Emergency Warning"), .emergency)
+    }
 }
 
 // MARK: - Intraday peak timing

@@ -5,8 +5,10 @@
 // returns them worst-first. Each feed labels its fields differently, so a small
 // per-source adapter maps its properties onto WeatherWarning.
 //
-// Coverage today: QLD (cleanest schema, home turf), NSW RFS, VicEmergency — all
-// CC-BY, all keyless. Adding a state is one Feed entry plus an adapter.
+// Coverage today: QLD (cleanest schema, home turf), NSW RFS, VicEmergency, and WA
+// (DFES / Emergency WA) — all keyless. Adding a state is one Feed entry plus an
+// adapter; a feed whose envelope isn't a plain GeoJSON FeatureCollection also
+// supplies its own `decode` (WA nests each warning's geometry under `geo-source`).
 
 import Foundation
 import CoreLocation
@@ -20,6 +22,9 @@ struct WarningsService {
         /// AU state bounding boxes — skip a feed entirely when the user is far
         /// from it, so we don't fetch NSW's feed for someone in Perth.
         let bbox: (latMin: Double, latMax: Double, lonMin: Double, lonMax: Double)
+        /// How to turn the feed body into features. Defaults to a standard GeoJSON
+        /// FeatureCollection; WA overrides it because its envelope is bespoke.
+        var decode: (Data) -> [GeoFeature]? = GeoFeature.decode
         let parse: (GeoFeature) -> (title: String, severity: WarningSeverity,
                                     category: String, instruction: String?, updated: Date?, url: String?)?
     }
@@ -64,6 +69,22 @@ struct WarningsService {
                          f.date("updated") ?? f.date("created"),
                          f.string("url"))
              }),
+        Feed(org: "DFES",
+             url: URL(string: "https://api.emergency.wa.gov.au/v1/warnings")!,
+             bbox: (-35.2, -13.5, 112.9, 129.1),
+             decode: GeoFeature.decodeWA,
+             parse: { f in
+                 guard let title = f.string("title") ?? f.string("headline") else { return nil }
+                 // "Bushfire Advice" / "…Watch and Act" / "…Emergency Warning" carries
+                 // the level; cap-severity ("Minor…"/"Severe"/"Extreme") is the backstop.
+                 let level = f.string("warning-type") ?? f.string("cap-severity")
+                 return (title,
+                         WarningSeverity.from(level),
+                         f.string("cap-category") ?? f.string("name") ?? "Warning",
+                         f.string("action-statement"),
+                         f.date("published-date-time") ?? f.date("updatedAt"),
+                         f.string("id").map { "https://emergency.wa.gov.au/warnings/\($0)" })
+             }),
     ]
 
     /// Returns the warnings covering `location`, worst severity first.
@@ -90,12 +111,24 @@ struct WarningsService {
     }
 
     private static func fetch(_ feed: Feed, covering p: CLLocationCoordinate2D) async -> [WeatherWarning] {
-        var req = URLRequest(url: feed.url)
-        req.timeoutInterval = 10
-        req.setValue("SkyWarden/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let features = GeoFeature.decode(data) else { return [] }
+        // Warnings refresh on every launch, forced pull and background wake. A
+        // short shared cache keeps us from hammering volunteer-run government
+        // servers when nothing has changed — and warnings don't move minute to
+        // minute. On a miss we fetch and store the raw body.
+        let cacheKey = "warnings:\(feed.org)"
+        let data: Data
+        if let cached = DiskCache.load(Data.self, key: cacheKey, ttl: CacheTTL.warnings) {
+            data = cached
+        } else {
+            var req = URLRequest(url: feed.url)
+            req.timeoutInterval = 10
+            req.setValue("SkyWarden/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
+            guard let (fetched, resp) = try? await URLSession.shared.data(for: req),
+                  (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+            data = fetched
+            DiskCache.save(data, key: cacheKey)
+        }
+        guard let features = feed.decode(data) else { return [] }
 
         return features.compactMap { f -> WeatherWarning? in
             guard f.area.contains(p), let parsed = feed.parse(f) else { return nil }
@@ -152,6 +185,34 @@ struct GeoFeature {
             let props = feat["properties"] as? [String: Any] ?? [:]
             let id = (props["guid"] ?? props["UniqueID"] ?? props["id"] ?? "\(i)")
             return GeoFeature(id: "\(id)", area: area, props: props)
+        }
+    }
+
+    /// WA's Emergency WA feed isn't a FeatureCollection: it is `{ warnings: [ … ] }`
+    /// where each warning's fields sit at the top level and its geometry is nested
+    /// under `geo-source` (itself a small FeatureCollection). Flatten that into the
+    /// same GeoFeature the adapters expect — the warning object *is* the property
+    /// bag, its `geo-source` geometry the area.
+    static func decodeWA(_ data: Data) -> [GeoFeature]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let warnings = root["warnings"] as? [[String: Any]] else { return nil }
+
+        return warnings.enumerated().compactMap { (i, w) -> GeoFeature? in
+            let area: WarningArea
+            if let geo = w["geo-source"] as? [String: Any],
+               let feats = geo["features"] as? [[String: Any]] {
+                let areas = feats.compactMap { ($0["geometry"] as? [String: Any]).flatMap(parseGeometry) }
+                guard !areas.isEmpty else { return nil }
+                area = areas.count == 1 ? areas[0] : .collection(areas)
+            } else if let loc = w["location"] as? [String: Any],
+                      let lat = loc["latitude"] as? Double, let lon = loc["longitude"] as? Double {
+                // No polygon on this warning — fall back to a radius around its point.
+                area = .point(CLLocationCoordinate2D(latitude: lat, longitude: lon), radiusKm: 50)
+            } else {
+                return nil
+            }
+            let id = (w["id"] as? String) ?? "\(i)"
+            return GeoFeature(id: id, area: area, props: w)
         }
     }
 

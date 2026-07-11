@@ -53,7 +53,7 @@ struct WarningsSheet: View {
                     VStack(spacing: 10) {
                         ForEach(warnings) { w in card(w) }
 
-                        Text("Official warnings from state emergency services (QFD, NSW RFS, VicEmergency). Always follow the direction of local authorities.")
+                        Text(attribution)
                             .font(.system(size: 10)).foregroundColor(Sky.muted).lineSpacing(2)
                             .padding(.top, 4)
                     }
@@ -71,6 +71,19 @@ struct WarningsSheet: View {
             .toolbarBackground(.visible, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
+    }
+
+    /// Names the agencies actually shown, so the credit (CC-BY requires it) is
+    /// always accurate rather than a fixed list that drifts as feeds are added.
+    private var attribution: String {
+        let names: [String: String] = [
+            "QFD": "Queensland Fire Department", "NSW RFS": "NSW Rural Fire Service",
+            "VicEmergency": "VicEmergency", "DFES": "DFES / Emergency WA",
+        ]
+        let orgs = warnings.map(\.sourceOrg)
+        let credited = Array(NSOrderedSet(array: orgs.map { names[$0] ?? $0 })) as? [String] ?? []
+        let list = ListFormatter.localizedString(byJoining: credited)
+        return "Official warnings from \(list). Always follow the direction of local authorities."
     }
 
     private func card(_ w: WeatherWarning) -> some View {

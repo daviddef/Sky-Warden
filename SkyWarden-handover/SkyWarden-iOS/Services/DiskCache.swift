@@ -131,4 +131,7 @@ enum CacheTTL {
     /// Historical normals for a calendar day. The past does not change.
     static let archive: TimeInterval = 24 * 3600
     static let news: TimeInterval = 30 * 60
+    /// Government warning feeds — polite to volunteer-run servers, short enough
+    /// that an escalating warning still surfaces within a refresh or two.
+    static let warnings: TimeInterval = 5 * 60
 }
