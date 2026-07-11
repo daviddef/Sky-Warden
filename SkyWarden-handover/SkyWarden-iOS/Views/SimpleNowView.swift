@@ -6,9 +6,10 @@
 //   hero      the comfort verdict word (ramp-coloured) + temperature + feels-like
 //   sentence  one plain-language line
 //   advice    a few chips — umbrella / sunscreen / jacket — only when they matter
-//   timeline  one shared morning→night axis with rain / wind / UV as ramp bars,
-//             each with its peak marked
+//   ranges    temp / rain / wind / UV each as a min→max track with the current
+//             reading riding it in a comfort-ringed bubble (the dial's ring markers)
 //   footer    confidence in plain words, only loud when sources disagree
+//   outlook   a quiet next-days peek
 //
 // Everything is a tap target into the Detailed (dial) view.
 
