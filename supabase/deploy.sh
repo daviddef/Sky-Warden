@@ -46,8 +46,12 @@ if [[ -z "$APP" ]]; then APP=$(openssl rand -hex 24); fi
 echo "▸ Linking project $REF …"
 supabase link --project-ref "$REF"
 
-echo "▸ Pushing the cache table …"
-supabase db push
+# NOTE: `supabase db push` applies the migration but needs the DATABASE password
+# (interactive), which a token-only login doesn't have. If you know it, run:
+#     supabase db push
+# Otherwise create the cache table once from the dashboard SQL editor by pasting
+# supabase/migrations/0001_weather_cache.sql. The function works uncached until
+# then. (This repo's initial deploy created the table via a one-shot function.)
 
 echo "▸ Setting server-side secrets …"
 SECRETS=(SKYWARDEN_APP_TOKEN="$APP")
