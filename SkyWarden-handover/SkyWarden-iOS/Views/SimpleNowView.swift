@@ -35,6 +35,7 @@ struct SimpleNowView: View {
             adviceChips
             timeline
             confidenceFooter
+            outlook
         }
         .padding(.top, 18).padding(.bottom, 8)
         .frame(maxWidth: .infinity)
@@ -87,6 +88,45 @@ struct SimpleNowView: View {
     private var timeline: some View {
         IntradayTimeline(hourly: consensus.hourlyForecast)
             .padding(.horizontal, 16)
+    }
+
+    // MARK: - Next-days outlook
+    /// A quiet peek at the next few days so "what about the weekend?" is answered
+    /// without leaving the screen — the hi is tinted by the comfort ramp, the lo
+    /// stays muted, the emoji carries the sky. The whole view already taps into
+    /// Detail; the Week tab holds the full run.
+    private var outlook: some View {
+        let cal = Calendar.current
+        let days = Array(consensus.dailyForecast
+            .filter { $0.date >= cal.startOfDay(for: Date()) && !cal.isDateInToday($0.date) }
+            .prefix(4))
+        return Group {
+            if days.count >= 2 {
+                VStack(spacing: 12) {
+                    Rectangle().fill(Sky.muted.opacity(0.15)).frame(height: 1)
+                        .padding(.horizontal, 24)
+                    HStack(spacing: 0) {
+                        ForEach(days) { d in
+                            VStack(spacing: 5) {
+                                Text(d.dayLabel)
+                                    .font(.system(size: 11, weight: .semibold)).foregroundColor(Sky.muted)
+                                Text(d.condition.emoji).font(.system(size: 20))
+                                HStack(spacing: 3) {
+                                    Text(Units.tempString(d.tempMax))
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(Comfort.comfortColor(ComfortMetric.temp.score(d.tempMax)))
+                                    Text(Units.tempString(d.tempMin))
+                                        .font(.system(size: 12)).foregroundColor(Sky.muted)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .padding(.top, 4)
+            }
+        }
     }
 
     // MARK: - Confidence footer
