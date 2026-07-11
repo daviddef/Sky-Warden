@@ -63,10 +63,9 @@ final class WeatherAggregator: ObservableObject {
             return
         }
 
-        // Score whatever these sources predicted hours ago against BOM's
-        // thermometer, file what they're predicting now, and let the ledger
-        // weight the merge once it has enough samples to have earned an opinion.
-        SkillLedger.shared.update(with: readings, location: location)
+        // Weight the merge by each source's proven skill so far. This reads the
+        // ledger as it already stands — this refresh's scoring (below) applies to
+        // the NEXT merge — so nothing here waits on the network.
         let weights = SkillLedger.shared.allWeights(among: readings.map(\.source), location: location)
         let consensus = calculator.calculate(from: readings, skillWeights: weights)
 
@@ -86,6 +85,18 @@ final class WeatherAggregator: ObservableObject {
             fetchState = .loaded(consensus)
         } else {
             fetchState = .partialLoad(consensus, failed)
+        }
+
+        // Update the ledger AFTER the screen is up, off the critical path: score
+        // what came true, file what's newly predicted. BOM is the truth in
+        // Australia; anywhere else a nearby airport METAR fills the gap (fetched
+        // only when there's no BOM), so the accuracy moat isn't Australia-only.
+        Task { [readings] in
+            var truth: [SkillMetric: Double]?
+            if !readings.contains(where: { $0.source.kind == .observation }) {
+                truth = await METARService().observation(near: location)?.truth
+            }
+            SkillLedger.shared.update(with: readings, truth: truth, location: location)
         }
     }
 

@@ -1150,3 +1150,61 @@ final class IntradayPeakTests: XCTestCase {
         XCTAssertNil(IntradayPeak.of(.humidity, hourly: [hour(1), hour(2)], now: t0))
     }
 }
+
+// MARK: - METAR global observation truth
+final class METARServiceTests: XCTestCase {
+
+    private let now = Date(timeIntervalSince1970: 1_783_000_000)
+    private func iso(_ offsetMin: Double) -> String {
+        let f = ISO8601DateFormatter()
+        return f.string(from: now.addingTimeInterval(offsetMin * 60))
+    }
+
+    private func feed(_ entries: [(icao: String, lat: Double, lon: Double, temp: Double, wspd: Double, ageMin: Double)]) -> Data {
+        let arr = entries.map { e -> [String: Any] in
+            ["icaoId": e.icao, "name": e.icao, "lat": e.lat, "lon": e.lon,
+             "temp": e.temp, "wspd": e.wspd, "reportTime": iso(-e.ageMin)]
+        }
+        return try! JSONSerialization.data(withJSONObject: arr)
+    }
+
+    func testParsesTempAndConvertsWindToKmh() {
+        let data = feed([("YSSY", -33.95, 151.17, 13, 10, 20)])
+        let s = METARService.parse(data)
+        XCTAssertEqual(s.count, 1)
+        XCTAssertEqual(s[0].tempC, 13, accuracy: 0.001)
+        XCTAssertEqual(s[0].windKmh, 10 * 1.852, accuracy: 0.01, "knots → km/h")
+    }
+
+    func testPicksTheNearestFreshStation() {
+        let loc = CLLocation(latitude: -33.87, longitude: 151.21)
+        let data = feed([
+            ("YSSY", -33.95, 151.17, 13, 7, 10),   // ~10 km
+            ("YSRI", -33.60, 150.78, 8, 0, 15),    // ~50 km
+        ])
+        let best = METARService.nearest(METARService.parse(data), to: loc, now: now)
+        XCTAssertEqual(best?.icao, "YSSY")
+        XCTAssertEqual(METARService.truth(best!)[.temp], 13)
+    }
+
+    /// A stale report must be rejected — scoring a forecast against a 5-hour-old
+    /// thermometer teaches the ledger the wrong lesson.
+    func testRejectsStaleReports() {
+        let loc = CLLocation(latitude: -33.87, longitude: 151.21)
+        let data = feed([("YSSY", -33.95, 151.17, 13, 7, 300)])   // 5h old
+        XCTAssertNil(METARService.nearest(METARService.parse(data), to: loc, now: now))
+    }
+
+    /// A station beyond the radius must be rejected — a thermometer 400 km away
+    /// isn't truth for here.
+    func testRejectsDistantStations() {
+        let loc = CLLocation(latitude: -33.87, longitude: 151.21)
+        let data = feed([("YBBN", -27.38, 153.12, 20, 5, 10)])    // Brisbane, ~730 km
+        XCTAssertNil(METARService.nearest(METARService.parse(data), to: loc, now: now))
+    }
+
+    func testEmptyFeedIsHandled() {
+        XCTAssertTrue(METARService.parse(Data("[]".utf8)).isEmpty)
+        XCTAssertTrue(METARService.parse(Data("garbage".utf8)).isEmpty)
+    }
+}

@@ -148,9 +148,10 @@ struct SourcesView: View {
                 }
             }
 
-            Text(WeatherSource.allCases.contains(where: { $0.kind == .observation })
-                 ? "Average miss against BOM's thermometer, for forecasts made 1–6 hours ahead. A source needs \(SkillTable.minSamples) checks before it can move the consensus."
-                 : "Needs a nearby observation station to score against.")
+            // BOM is the observation in Australia; a nearby airport (METAR) is
+            // the truth elsewhere. Both are real thermometers, so the copy is
+            // location-honest without naming the wrong one.
+            Text("Average miss against the nearest ground observation — BOM here, or an airport report elsewhere — for forecasts made 1–6 hours ahead. A source needs \(SkillTable.minSamples) checks before it can move the consensus.")
                 .font(.system(size: 9)).foregroundColor(Sky.muted).lineSpacing(2)
         }
         .padding(14)

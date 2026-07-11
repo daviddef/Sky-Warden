@@ -42,14 +42,18 @@ final class SkillLedger {
     /// the present — is the one-hour minimum horizon in `SkillTable.forecasts`,
     /// not this ordering. A forecast for now+1h sits well outside the ±30 min
     /// scoring window. The order here is merely tidy.
+    /// `truth` overrides the in-readings observation — used to pass a METAR
+    /// reading outside Australia, where BOM (the only in-readings observation)
+    /// isn't present.
     @discardableResult
-    func update(with readings: [WeatherReading], location: CLLocation, now: Date = Date()) -> Int {
+    func update(with readings: [WeatherReading], truth explicitTruth: [SkillMetric: Double]? = nil,
+                location: CLLocation, now: Date = Date()) -> Int {
         queue.sync {
             let k = key(location)
             var t = loaded[k] ?? DiskCache.loadDurable(SkillTable.self, key: k) ?? SkillTable()
 
             var scored = 0
-            if let truth = SkillTable.observation(from: readings) {
+            if let truth = SkillTable.observation(from: readings) ?? explicitTruth {
                 scored = t.score(observed: truth, at: now)
             }
             t.record(SkillTable.forecasts(from: readings, now: now), now: now)
