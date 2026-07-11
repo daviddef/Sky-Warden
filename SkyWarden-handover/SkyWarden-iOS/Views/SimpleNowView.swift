@@ -92,7 +92,7 @@ struct SimpleNowView: View {
             .rain: consensus.rainProbability,
             .wind: consensus.windSpeed,
             .uv:   consensus.uvIndex,
-        ])
+        ], feelsLike: consensus.feelsLike)
         .padding(.horizontal, 16)
     }
 
@@ -251,13 +251,19 @@ private struct FlowChips: View {
 private struct IntradayRanges: View {
     let hourly: [ConsensusHourly]
     let current: [ComfortMetric: Double]
+    var feelsLike: Double? = nil
 
-    private struct Row { let metric: ComfortMetric; let values: [Double]; let current: Double }
+    private struct Row {
+        let metric: ComfortMetric
+        let values: [Double]
+        let current: Double
+        var feels: Double? = nil
+    }
 
     var body: some View {
         let window = Array(hourly.prefix(24))
         let rows: [Row] = window.count >= 3 ? [
-            Row(metric: .temp, values: window.map(\.temperature),    current: current[.temp] ?? 0),
+            Row(metric: .temp, values: window.map(\.temperature),    current: current[.temp] ?? 0, feels: feelsLike),
             Row(metric: .rain, values: window.map(\.rainProbability), current: current[.rain] ?? 0),
             Row(metric: .wind, values: window.map(\.windSpeed),      current: current[.wind] ?? 0),
             Row(metric: .uv,   values: window.compactMap(\.uvIndex), current: current[.uv] ?? 0),
@@ -267,7 +273,7 @@ private struct IntradayRanges: View {
             if rows.isEmpty {
                 EmptyView()
             } else {
-                VStack(spacing: 15) {
+                VStack(spacing: 18) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { _, row in rangeRow(row) }
                 }
             }
@@ -278,57 +284,68 @@ private struct IntradayRanges: View {
         let lo = row.values.min() ?? row.current
         let hi = row.values.max() ?? row.current
         let span = hi - lo
-        // Where the current reading sits, 0 = low end … 1 = high end. When the day
-        // is flat (no real span) the bubble rests in the middle rather than pinning
-        // to an arbitrary end.
-        let t: CGFloat = span > 0.5 ? CGFloat(min(max((row.current - lo) / span, 0), 1)) : 0.5
+        // Position on the track, 0 = low end … 1 = high end. A flat day (no real
+        // span) rests the bubble mid-track rather than pinning it to an end.
+        let frac: (Double) -> CGFloat = { v in
+            span > 0.5 ? CGFloat(min(max((v - lo) / span, 0), 1)) : 0.5
+        }
+        let t = frac(row.current)
+        let feelsT = row.feels.map(frac)
 
-        return HStack(spacing: 8) {
-            HStack(spacing: 5) {
-                Text(row.metric.emoji).font(.system(size: 12))
-                Text(row.metric.label).font(.system(size: 11, weight: .semibold))
+        return HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Text(row.metric.emoji).font(.system(size: 15))
+                Text(row.metric.label).font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Sky.text).lineLimit(1).fixedSize()
             }
-            .frame(width: 58, alignment: .leading)
+            .frame(width: 68, alignment: .leading)
 
             Text(row.metric.format(lo))
-                .font(.system(size: 11)).foregroundColor(Sky.muted)
-                .frame(width: 34, alignment: .trailing)
+                .font(.system(size: 15)).foregroundColor(Sky.muted)
+                .frame(width: 36, alignment: .trailing)
 
             GeometryReader { geo in
                 let w = geo.size.width
-                let bubbleW: CGFloat = 58
+                let bubbleW: CGFloat = 66
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(LinearGradient(
                             colors: [Comfort.comfortColor(row.metric.score(lo)),
                                      Comfort.comfortColor(row.metric.score(hi))],
                             startPoint: .leading, endPoint: .trailing))
-                        .frame(height: 5).opacity(0.9)
-                        .frame(maxHeight: .infinity, alignment: .center)
+                        .frame(height: 16)
+                    // Feels-like, shown only when it visibly parts from the reading —
+                    // a ghost marker so temperature carries both truths at once.
+                    if let ft = feelsT, abs(ft - t) > 0.06 {
+                        Circle().strokeBorder(Sky.white.opacity(0.75), lineWidth: 2)
+                            .frame(width: 13, height: 13)
+                            .offset(x: ft * w - 6.5)
+                    }
                     bubble(row)
                         .offset(x: min(max(t * w - bubbleW / 2, 0), max(w - bubbleW, 0)))
                 }
             }
-            .frame(height: 30)
+            .frame(height: 38)
 
             Text(row.metric.format(hi))
-                .font(.system(size: 11)).foregroundColor(Sky.muted)
-                .frame(width: 34, alignment: .leading)
+                .font(.system(size: 15)).foregroundColor(Sky.muted)
+                .frame(width: 36, alignment: .leading)
         }
     }
 
     /// The current reading, styled like a Detailed dial ring marker: icon + value
-    /// in a dark capsule ringed in the metric's comfort colour.
+    /// in a dark capsule ringed and lit in the metric's comfort colour.
     private func bubble(_ row: Row) -> some View {
-        HStack(spacing: 3) {
-            Text(row.metric.emoji).font(.system(size: 10))
+        let c = Comfort.comfortColor(row.metric.score(row.current))
+        return HStack(spacing: 4) {
+            Text(row.metric.emoji).font(.system(size: 13))
             Text(row.metric.format(row.current))
-                .font(.system(size: 11, weight: .bold)).foregroundColor(Sky.white)
+                .font(.system(size: 19, weight: .bold)).foregroundColor(Sky.white)
         }
-        .padding(.horizontal, 7).padding(.vertical, 3)
+        .padding(.horizontal, 11).padding(.vertical, 6)
         .background(Capsule().fill(Sky.navy))
-        .overlay(Capsule().stroke(Comfort.comfortColor(row.metric.score(row.current)), lineWidth: 1.5))
+        .overlay(Capsule().stroke(c, lineWidth: 2))
+        .shadow(color: c.opacity(0.45), radius: 7, y: 2)
         .fixedSize()
     }
 }
