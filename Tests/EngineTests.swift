@@ -1338,3 +1338,50 @@ final class METARServiceTests: XCTestCase {
     }
 }
 
+
+// MARK: - Precipitation nowcast
+final class PrecipNowcastTests: XCTestCase {
+    /// Build a nowcast from a 15-min mm series, step 0 = the current block.
+    private func nowcast(_ mm: [Double]) -> PrecipNowcast {
+        let now = Date()
+        let steps = mm.enumerated().map { i, v in
+            PrecipNowcast.Step(time: now.addingTimeInterval(Double(i) * 15 * 60), mm: v)
+        }
+        return PrecipNowcast(steps: steps)
+    }
+
+    func testRainStartingSoonHeadline() {
+        let n = nowcast([0, 0, 0.5, 0.8])          // dry now, wet from +30 min
+        XCTAssertFalse(n.rainingNow)
+        XCTAssertEqual(n.nextChange?.starts, true)
+        XCTAssertEqual(n.minutesToChange, 30)
+        XCTAssertEqual(n.headline, "Rain starting in about 30 min")
+    }
+
+    func testRainEasingHeadline() {
+        let n = nowcast([0.6, 0.5, 0, 0])          // raining now, dry from +30 min
+        XCTAssertTrue(n.rainingNow)
+        XCTAssertEqual(n.nextChange?.starts, false)
+        XCTAssertTrue(n.headline?.contains("easing") ?? false)
+    }
+
+    func testNoHeadlineWhenDryStaysDry() {
+        XCTAssertNil(nowcast([0, 0, 0, 0]).headline)
+        XCTAssertNil(nowcast([0, 0, 0, 0]).nextChange?.at)
+    }
+
+    func testNoHeadlineWhenRainStaysRaining() {
+        XCTAssertNil(nowcast([0.5, 0.6, 0.5, 0.7]).headline)
+    }
+
+    func testMinutesRoundToFive() {
+        XCTAssertEqual((nowcast([0, 0, 0.5]).minutesToChange ?? -1) % 5, 0)
+    }
+
+    /// A trace below the wet threshold isn't "rain" — no false alarm.
+    func testSubThresholdDrizzleIsNotRain() {
+        let n = nowcast([0, 0.05, 0.08, 0])        // all under 0.1 mm
+        XCTAssertFalse(n.rainingNow)
+        XCTAssertNil(n.headline)
+    }
+}

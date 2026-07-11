@@ -219,3 +219,79 @@ enum ServiceError: LocalizedError {
         }
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// MARK: - Precipitation nowcast (the "rain starts in ~15 min" job)
+// ────────────────────────────────────────────────────────────────────────────
+// The most-missed thing since Dark Sky: minute-scale "when does the rain start /
+// stop, here". Open-Meteo's minutely_15 gives 15-min precipitation for the coming
+// two hours at the exact point — cheaper and more precise than reading it off a
+// radar tile — and it already routes through our cache.
+
+struct PrecipNowcast: Equatable {
+    /// 15-minute precipitation (mm) starting at the current block.
+    let steps: [Step]
+    struct Step: Equatable { let time: Date; let mm: Double }
+
+    /// Any measurable rain in a 15-min block. Deliberately low so a light shower
+    /// still triggers the "starting soon" heads-up.
+    static let wet = 0.1
+
+    var rainingNow: Bool { (steps.first?.mm ?? 0) >= Self.wet }
+
+    /// The next flip between wet and dry in the window, and when.
+    var nextChange: (starts: Bool, at: Date)? {
+        guard let now = steps.first else { return nil }
+        let nowWet = now.mm >= Self.wet
+        for s in steps.dropFirst() where (s.mm >= Self.wet) != nowWet {
+            return (starts: !nowWet, at: s.time)
+        }
+        return nil
+    }
+
+    /// Minutes until that change, rounded to 5, or nil if there's no change ahead.
+    var minutesToChange: Int? {
+        guard let c = nextChange else { return nil }
+        let m = Int((c.at.timeIntervalSinceNow / 60 / 5).rounded()) * 5
+        return m >= 0 ? m : nil
+    }
+
+    /// The heads-up line, or nil when there's nothing worth saying (dry and staying
+    /// dry, or raining with no end in the window — the hourly view covers those).
+    var headline: String? {
+        guard let change = nextChange, let mins = minutesToChange else { return nil }
+        let when = mins <= 5 ? "in a few minutes" : "in about \(mins) min"
+        return change.starts ? "Rain starting \(when)" : "Rain easing \(when)"
+    }
+}
+
+struct NowcastService {
+    private let baseURL = "https://api.open-meteo.com/v1/forecast"
+
+    func fetch(location: CLLocation) async -> PrecipNowcast? {
+        let items: [URLQueryItem] = [
+            .init(name: "latitude",             value: String(location.coordinate.latitude)),
+            .init(name: "longitude",            value: String(location.coordinate.longitude)),
+            .init(name: "minutely_15",          value: "precipitation"),
+            .init(name: "forecast_minutely_15", value: "8"),
+            .init(name: "past_minutely_15",     value: "0"),
+            .init(name: "precipitation_unit",   value: "mm"),
+            .init(name: "timeformat",           value: "unixtime"),
+            .init(name: "timezone",             value: "GMT"),
+        ]
+        guard let request = WeatherProxy.request(source: "openmeteo", directBase: baseURL, items: items),
+              let (data, resp) = try? await URLSession.shared.data(for: request),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let decoded = try? JSONDecoder().decode(NowcastResponse.self, from: data)
+        else { return nil }
+
+        let steps = zip(decoded.minutely_15.time, decoded.minutely_15.precipitation)
+            .map { PrecipNowcast.Step(time: Date(timeIntervalSince1970: TimeInterval($0)), mm: $1) }
+        return steps.isEmpty ? nil : PrecipNowcast(steps: steps)
+    }
+
+    private struct NowcastResponse: Decodable {
+        struct M15: Decodable { let time: [Int]; let precipitation: [Double] }
+        let minutely_15: M15
+    }
+}

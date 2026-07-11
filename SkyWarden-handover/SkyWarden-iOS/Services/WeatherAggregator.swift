@@ -206,6 +206,11 @@ final class WeatherAggregator: ObservableObject {
     /// Called by BGAppRefreshTask in AppDelegate
     func backgroundRefresh(location: CLLocation) async {
         await refresh(location: location, force: true)
+        // The whole point of a background wake for a weather app: catch incoming
+        // rain and warn before it arrives, even with the app closed.
+        if let nowcast = await NowcastService().fetch(location: location) {
+            PrecipNotifier.shared.consider(nowcast, place: "your area")
+        }
     }
 }
 

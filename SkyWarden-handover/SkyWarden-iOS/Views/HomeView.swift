@@ -5,6 +5,7 @@
 import SwiftUI
 import CoreLocation
 import EventKit
+import UserNotifications
 
 struct HomeView: View {
     let consensus: ConsensusWeather
@@ -26,6 +27,7 @@ struct HomeView: View {
     @State private var showWeekSheet = false
     @State private var showFeedback = false
     @State private var userReport: UserReport?
+    @State private var nowcast: PrecipNowcast?
     @StateObject private var signals = HomeSignals()
     @AppStorage("display.nowSimple") private var simpleMode = true
     @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
@@ -75,6 +77,22 @@ struct HomeView: View {
         .padding(.horizontal, 16)
     }
 
+    /// The Dark Sky signature: a prominent heads-up when rain is about to start or
+    /// stop here in the next couple of hours. Silent when nothing's imminent.
+    @ViewBuilder private var nowcastBanner: some View {
+        if let n = nowcast, let line = n.headline {
+            HStack(spacing: 10) {
+                Text(n.rainingNow ? "🌦" : "🌧").font(.system(size: 19))
+                Text(line).font(.system(size: 14, weight: .semibold)).foregroundColor(.white)
+                Spacer(minLength: 4)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .background(Sky.rain.opacity(0.92))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 16).padding(.top, 12)
+        }
+    }
+
     private func reportSummary(_ r: UserReport) -> String {
         var parts: [String] = []
         if let rain = r.rainPercent { parts.append(rain == 0 ? "dry" : "\(Int(rain))% rain") }
@@ -91,6 +109,8 @@ struct HomeView: View {
                     WarningsBanner(warnings: warnings)
                         .padding(.horizontal, 16).padding(.top, 12)
                 }
+
+                nowcastBanner
 
                 // Ambient signals both modes share: a calendar event the weather
                 // threatens, the next tide, the moon, a sky event coming up, a
@@ -125,6 +145,12 @@ struct HomeView: View {
             }
             .task(id: location.coordinate.latitude) {
                 userReport = UserReportStore.shared.report(for: location)
+            }
+            .task(id: location.coordinate.latitude) {
+                nowcast = await NowcastService().fetch(location: location)
+                if let n = nowcast {
+                    PrecipNotifier.shared.consider(n, place: placeName ?? "your area")
+                }
             }
         }
         .refreshable { await refresh?() }
@@ -966,6 +992,40 @@ struct MostAccurateCard: View {
             Text("±\(String(format: "%.1f", Units.tempDelta(mae)))\(Units.temperature.label)")
                 .font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundColor(Sky.white)
                 .frame(width: 48, alignment: .trailing)
+        }
+    }
+}
+
+// MARK: - Precip nowcast notifier
+
+/// Fires a quiet local notification when rain is about to start here — the
+/// "rain in 15 min at your location" alert people have missed since Dark Sky.
+/// Provisional authorisation delivers it to Notification Center with no intrusive
+/// prompt; the user can promote it to a banner alert from Settings. De-duplicated
+/// so one incoming shower produces one heads-up, not one per refresh.
+final class PrecipNotifier {
+    static let shared = PrecipNotifier()
+    private var lastNotifiedStart: Date?
+
+    func consider(_ nowcast: PrecipNowcast, place: String) {
+        // Only for rain STARTING soon while it's currently dry.
+        guard !nowcast.rainingNow, let change = nowcast.nextChange, change.starts,
+              let mins = nowcast.minutesToChange, mins <= 45 else { return }
+        if let last = lastNotifiedStart, abs(last.timeIntervalSince(change.at)) < 30 * 60 { return }
+        lastNotifiedStart = change.at
+
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .provisional])) ?? false
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Rain soon in \(place)"
+            content.body = mins <= 5 ? "Rain starting in a few minutes." : "Rain starting in about \(mins) minutes."
+            content.sound = .default
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            let req = UNNotificationRequest(identifier: "precip-\(Int(change.at.timeIntervalSince1970))",
+                                            content: content, trigger: trigger)
+            try? await center.add(req)
         }
     }
 }
