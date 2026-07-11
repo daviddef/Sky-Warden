@@ -20,26 +20,28 @@ struct SimpleNowView: View {
     let failedSources: [WeatherSource]
     let confidence: Double
     let placeName: String?
+    var vsLastYear: Double? = nil
     var onOpenDetail: (() -> Void)? = nil
     var onTapTemperature: (() -> Void)? = nil
 
     private var comfort: ComfortData { ComfortData(consensus: consensus) }
 
     var body: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: 16) {
             hero
             Text(SimpleSummary.sentence(for: comfort, consensus: consensus))
-                .font(.system(size: 16, weight: .regular))
+                .font(.system(size: 15, weight: .regular))
                 .foregroundColor(Sky.text).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 24)
 
             adviceChips
+            uvAdvice
             timeline
             confidenceFooter
             outlook
         }
-        .padding(.top, 18).padding(.bottom, 8)
+        .padding(.top, 14).padding(.bottom, 8)
         .frame(maxWidth: .infinity)
         .background(heroBackdrop, alignment: .top)
         .contentShape(Rectangle())
@@ -66,21 +68,42 @@ struct SimpleNowView: View {
     }
 
     // MARK: - Hero
+    // Denser than before: the verdict is a small eyebrow, the temperature leads at
+    // a trimmed size, and feels-like / condition / "vs last year" share one quiet
+    // line beneath — so the block says more in less height. Tap the number for the
+    // hour-by-hour overlay.
     private var hero: some View {
         let score = Comfort.overallScore(comfort)
-        return VStack(spacing: 2) {
+        return VStack(spacing: 3) {
             Text(Comfort.overallLabel(score).uppercased())
-                .font(.system(size: 15, weight: .bold)).kerning(1.5)
+                .font(.system(size: 14, weight: .bold)).kerning(1.5)
                 .foregroundColor(Comfort.overallColor(score))
             Text(Units.tempString(consensus.temperature))
-                .font(.system(size: 78, weight: .thin, design: .rounded))
+                .font(.system(size: 62, weight: .thin, design: .rounded))
                 .foregroundColor(Sky.white)
                 .contentShape(Rectangle())
                 .onTapGesture { onTapTemperature?() }
                 .accessibilityAddTraits(.isButton)
                 .accessibilityHint("Opens today's hourly detail")
-            Text("feels like \(Units.tempString(consensus.feelsLike)) · \(consensus.condition.rawValue.lowercased())")
+            Text("feels \(Units.tempString(consensus.feelsLike)) · \(consensus.condition.rawValue.lowercased())")
                 .font(.system(size: 13)).foregroundColor(Sky.muted)
+            vsLastYearLine
+        }
+    }
+
+    /// "2° warmer than last year" — today's high vs last year's on this day.
+    @ViewBuilder private var vsLastYearLine: some View {
+        if let d = vsLastYear, abs(d) >= 1 {
+            let warmer = d > 0
+            let delta = Int(abs(Units.tempDelta(d)).rounded())
+            HStack(spacing: 4) {
+                Image(systemName: warmer ? "arrow.up.right" : "arrow.down.right")
+                    .font(.system(size: 9, weight: .bold))
+                Text("\(delta)° \(warmer ? "warmer" : "cooler") than last year")
+                    .font(.system(size: 11.5, weight: .medium))
+            }
+            .foregroundColor(warmer ? Sky.amber : Sky.tide)
+            .padding(.top, 1)
         }
     }
 
@@ -88,6 +111,44 @@ struct SimpleNowView: View {
     private var adviceChips: some View {
         let chips = SimpleSummary.advice(for: comfort, consensus: consensus)
         return FlowChips(chips: chips)
+    }
+
+    // MARK: - UV advice (Slip · Slop · Slap · Seek · Slide)
+    // Surfaced on the summary only when today's UV actually gets high, with the
+    // protection window worked out from the hourly UV ≥ 3.
+    @ViewBuilder private var uvAdvice: some View {
+        if let peak = IntradayPeak.of(.uv, hourly: consensus.hourlyForecast), peak.value >= 6 {
+            VStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("☀️").font(.system(size: 12))
+                    Text(uvWindow().map { "Sun protection \($0)" }
+                         ?? "Sun protection — UV peaks \(Int(peak.value.rounded()))")
+                        .font(.system(size: 11, weight: .semibold)).foregroundColor(Sky.amber)
+                }
+                HStack(spacing: 0) {
+                    ForEach([("👕", "Slip"), ("🧴", "Slop"), ("🧢", "Slap"),
+                             ("🌳", "Seek"), ("🕶", "Slide")], id: \.1) { icon, word in
+                        VStack(spacing: 3) {
+                            Text(icon).font(.system(size: 18))
+                            Text(word).font(.system(size: 10, weight: .semibold)).foregroundColor(Sky.text)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(.vertical, 10).padding(.horizontal, 8)
+                .background(Sky.amber.opacity(0.10))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Sky.amber.opacity(0.3), lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    /// The window of the day where UV ≥ 3, e.g. "10am–2pm".
+    private func uvWindow() -> String? {
+        let hot = consensus.hourlyForecast.filter { ($0.uvIndex ?? 0) >= 3 }
+        guard let first = hot.first, let last = hot.last, first.time != last.time else { return nil }
+        return "\(IntradayPeak.hourLabel(first.time))–\(IntradayPeak.hourLabel(last.time))"
     }
 
     // MARK: - Timeline

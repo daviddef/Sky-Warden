@@ -43,6 +43,13 @@ struct HomeView: View {
     }
     private var flagCount: Int { comfort.rings.filter(\.hasFlag).count }
 
+    /// Today's forecast high vs last year's high on this calendar day, in °C — the
+    /// "2° warmer than last year" line. Nil until the history loads.
+    private var vsLastYear: Double? {
+        guard let ly = onThisDay?.oneYear, let hi = consensus.dailyForecast.first?.tempMax else { return nil }
+        return hi - ly
+    }
+
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
@@ -62,6 +69,7 @@ struct HomeView: View {
                 if simpleMode {
                     SimpleNowView(consensus: consensus, failedSources: failedSources,
                                   confidence: confidence, placeName: placeName,
+                                  vsLastYear: vsLastYear,
                                   onOpenDetail: { withAnimation { simpleMode = false } },
                                   onTapTemperature: { showTodayOverlay = true })
                     Spacer(minLength: 20)
