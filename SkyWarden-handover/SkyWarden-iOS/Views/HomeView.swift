@@ -105,7 +105,7 @@ struct HomeView: View {
                 if simpleMode {
                     SimpleNowView(consensus: consensus, failedSources: failedSources,
                                   confidence: confidence, placeName: placeName,
-                                  vsLastYear: vsLastYear,
+                                  vsLastYear: vsLastYear, userReport: userReport,
                                   onOpenDetail: { withAnimation { simpleMode = false } },
                                   onTapTemperature: { showTodayOverlay = true })
                     Spacer(minLength: 20)

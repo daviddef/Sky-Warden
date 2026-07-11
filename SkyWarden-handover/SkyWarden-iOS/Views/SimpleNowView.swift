@@ -21,6 +21,7 @@ struct SimpleNowView: View {
     let confidence: Double
     let placeName: String?
     var vsLastYear: Double? = nil
+    var userReport: UserReport? = nil
     var onOpenDetail: (() -> Void)? = nil
     var onTapTemperature: (() -> Void)? = nil
 
@@ -155,12 +156,20 @@ struct SimpleNowView: View {
     @AppStorage(DisplayKey.simpleStyle) private var simpleStyle = SimpleStyle.bars.rawValue
 
     private var timeline: some View {
-        let current: [ComfortMetric: Double] = [
+        // A fresh user correction wins over the consensus for the reading it
+        // touches — "it says raining, it's dry" should show dry. The range/gauge
+        // still spans the day's forecast; only the current-reading bubble moves.
+        var current: [ComfortMetric: Double] = [
             .temp: consensus.temperature,
             .rain: consensus.rainProbability,
             .wind: consensus.windSpeed,
             .uv:   consensus.uvIndex,
         ]
+        if let r = userReport {
+            if let v = r.rainPercent { current[.rain] = v }
+            if let v = r.temperature { current[.temp] = v }
+            if let v = r.windSpeed  { current[.wind] = v }
+        }
         return Group {
             if SimpleStyle(rawValue: simpleStyle) == .gauges {
                 IntradayGauges(hourly: consensus.hourlyForecast, current: current)
