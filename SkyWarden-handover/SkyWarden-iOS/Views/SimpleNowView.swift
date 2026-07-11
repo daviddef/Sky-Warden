@@ -86,8 +86,13 @@ struct SimpleNowView: View {
 
     // MARK: - Timeline
     private var timeline: some View {
-        IntradayTimeline(hourly: consensus.hourlyForecast)
-            .padding(.horizontal, 16)
+        IntradayRanges(hourly: consensus.hourlyForecast, current: [
+            .temp: consensus.temperature,
+            .rain: consensus.rainProbability,
+            .wind: consensus.windSpeed,
+            .uv:   consensus.uvIndex,
+        ])
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Next-days outlook
@@ -235,94 +240,94 @@ private struct FlowChips: View {
     }
 }
 
-// MARK: - Intraday timeline
+// MARK: - Intraday ranges
 
-/// One shared morning→night axis. Temperature leads (it's the headline), then
-/// rain / wind / UV. Each hour is a segment tinted by that metric's comfort, and
-/// the peak hour is marked and labelled.
-private struct IntradayTimeline: View {
+/// Each metric as a min→max track with the current reading riding it in a bubble,
+/// echoing the Detailed dial's ring markers. Answers "where does right now sit in
+/// today's span?" at a glance: the track runs low→high, tinted by the comfort ramp
+/// across that span, the ends carry the low and high, and the comfort-outlined
+/// bubble sits where the current value falls between them.
+private struct IntradayRanges: View {
     let hourly: [ConsensusHourly]
+    let current: [ComfortMetric: Double]
 
-    private struct Row { let label: String; let metric: ComfortMetric; let icon: String; let values: [(Date, Double?)] }
+    private struct Row { let metric: ComfortMetric; let values: [Double]; let current: Double }
 
     var body: some View {
-        let window = Array(hourly.prefix(14))
-        if window.count >= 3 {
-            let rows = [
-                Row(label: "Temp", metric: .temp, icon: "🌡", values: window.map { ($0.time, $0.temperature) }),
-                Row(label: "Rain", metric: .rain, icon: "💧", values: window.map { ($0.time, $0.rainProbability) }),
-                Row(label: "Wind", metric: .wind, icon: "💨", values: window.map { ($0.time, $0.windSpeed) }),
-                Row(label: "UV",   metric: .uv,   icon: "☀️", values: window.map { ($0.time, $0.uvIndex) }),
-            ]
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in bar(row, window: window) }
-                axis(window)
-            }
-        } else {
-            EmptyView()
-        }
-    }
+        let window = Array(hourly.prefix(24))
+        let rows: [Row] = window.count >= 3 ? [
+            Row(metric: .temp, values: window.map(\.temperature),    current: current[.temp] ?? 0),
+            Row(metric: .rain, values: window.map(\.rainProbability), current: current[.rain] ?? 0),
+            Row(metric: .wind, values: window.map(\.windSpeed),      current: current[.wind] ?? 0),
+            Row(metric: .uv,   values: window.compactMap(\.uvIndex), current: current[.uv] ?? 0),
+        ].filter { !$0.values.isEmpty } : []
 
-    private func bar(_ row: Row, window: [ConsensusHourly]) -> some View {
-        let peak = IntradayPeak.of(row.metric, hourly: hourly)
-        // The right-hand callout: the peak's VALUE and time, or the current
-        // reading when nothing peaks — so every row says something concrete.
-        let callout: String
-        if let peak {
-            callout = "\(row.metric.format(peak.value)) \(IntradayPeak.hourLabel(peak.time))"
-        } else if let first = row.values.first?.1 {
-            callout = row.metric.format(first)
-        } else {
-            callout = "—"
-        }
-        return HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Text(row.icon).font(.system(size: 12))
-                Text(row.label).font(.system(size: 11, weight: .semibold)).foregroundColor(Sky.text)
-            }
-            .frame(width: 54, alignment: .leading)
-
-            GeometryReader { geo in
-                let w = geo.size.width / CGFloat(row.values.count)
-                ZStack(alignment: .leading) {
-                    HStack(spacing: 1.5) {
-                        ForEach(Array(row.values.enumerated()), id: \.offset) { _, v in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(segmentColor(row.metric, v.1))
-                                .frame(height: 18)
-                        }
-                    }
-                    if let peak, let i = window.firstIndex(where: { $0.time == peak.time }) {
-                        // A capped marker over the peak hour, so it reads clearly.
-                        Capsule().fill(Sky.white)
-                            .frame(width: 2.5, height: 24)
-                            .offset(x: (CGFloat(i) + 0.5) * w - 1.25)
-                    }
+        return Group {
+            if rows.isEmpty {
+                EmptyView()
+            } else {
+                VStack(spacing: 15) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in rangeRow(row) }
                 }
             }
-            .frame(height: 24)
-
-            Text(callout)
-                .font(.system(size: 10, weight: .medium)).foregroundColor(peak == nil ? Sky.muted : Sky.text)
-                .frame(width: 58, alignment: .trailing).lineLimit(1).minimumScaleFactor(0.8)
         }
     }
 
-    private func segmentColor(_ metric: ComfortMetric, _ value: Double?) -> Color {
-        guard let value else { return Sky.surface.opacity(0.4) }
-        // A touch more saturated than before so the shape reads at a glance.
-        return Comfort.comfortColor(metric.score(value)).opacity(0.95)
+    private func rangeRow(_ row: Row) -> some View {
+        let lo = row.values.min() ?? row.current
+        let hi = row.values.max() ?? row.current
+        let span = hi - lo
+        // Where the current reading sits, 0 = low end … 1 = high end. When the day
+        // is flat (no real span) the bubble rests in the middle rather than pinning
+        // to an arbitrary end.
+        let t: CGFloat = span > 0.5 ? CGFloat(min(max((row.current - lo) / span, 0), 1)) : 0.5
+
+        return HStack(spacing: 8) {
+            HStack(spacing: 5) {
+                Text(row.metric.emoji).font(.system(size: 12))
+                Text(row.metric.label).font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Sky.text).lineLimit(1).fixedSize()
+            }
+            .frame(width: 58, alignment: .leading)
+
+            Text(row.metric.format(lo))
+                .font(.system(size: 11)).foregroundColor(Sky.muted)
+                .frame(width: 34, alignment: .trailing)
+
+            GeometryReader { geo in
+                let w = geo.size.width
+                let bubbleW: CGFloat = 58
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(LinearGradient(
+                            colors: [Comfort.comfortColor(row.metric.score(lo)),
+                                     Comfort.comfortColor(row.metric.score(hi))],
+                            startPoint: .leading, endPoint: .trailing))
+                        .frame(height: 5).opacity(0.9)
+                        .frame(maxHeight: .infinity, alignment: .center)
+                    bubble(row)
+                        .offset(x: min(max(t * w - bubbleW / 2, 0), max(w - bubbleW, 0)))
+                }
+            }
+            .frame(height: 30)
+
+            Text(row.metric.format(hi))
+                .font(.system(size: 11)).foregroundColor(Sky.muted)
+                .frame(width: 34, alignment: .leading)
+        }
     }
 
-    private func axis(_ window: [ConsensusHourly]) -> some View {
-        HStack {
-            Text(IntradayPeak.hourLabel(window.first!.time))
-            Spacer()
-            Text(IntradayPeak.hourLabel(window[window.count / 2].time))
-            Spacer()
-            Text(IntradayPeak.hourLabel(window.last!.time))
+    /// The current reading, styled like a Detailed dial ring marker: icon + value
+    /// in a dark capsule ringed in the metric's comfort colour.
+    private func bubble(_ row: Row) -> some View {
+        HStack(spacing: 3) {
+            Text(row.metric.emoji).font(.system(size: 10))
+            Text(row.metric.format(row.current))
+                .font(.system(size: 11, weight: .bold)).foregroundColor(Sky.white)
         }
-        .font(.system(size: 9)).foregroundColor(Sky.muted)
-        .padding(.leading, 62).padding(.trailing, 66)
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .background(Capsule().fill(Sky.navy))
+        .overlay(Capsule().stroke(Comfort.comfortColor(row.metric.score(row.current)), lineWidth: 1.5))
+        .fixedSize()
     }
 }
