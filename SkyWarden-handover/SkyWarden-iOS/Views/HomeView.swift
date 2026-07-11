@@ -24,6 +24,8 @@ struct HomeView: View {
     @State private var warnings: [WeatherWarning] = []
     @State private var showTodayOverlay = false
     @State private var showWeekSheet = false
+    @State private var showFeedback = false
+    @State private var userReport: UserReport?
     @StateObject private var signals = HomeSignals()
     @AppStorage("display.nowSimple") private var simpleMode = true
     @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
@@ -50,6 +52,38 @@ struct HomeView: View {
         return hi - ly
     }
 
+    /// The always-there way in to correcting the forecast — "it says raining, it's
+    /// dry". Once you've reported, it shows what you said and lets you update it.
+    @ViewBuilder private var reportBar: some View {
+        Button { showFeedback = true } label: {
+            HStack(spacing: 7) {
+                Image(systemName: userReport == nil ? "hand.raised" : "checkmark.seal.fill")
+                    .font(.system(size: 12))
+                Text(userReport.map { "You reported \(reportSummary($0))" }
+                     ?? "Not matching outside? Tell us what it's really doing")
+                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).opacity(0.5)
+            }
+            .foregroundColor(userReport == nil ? Sky.muted : Sky.tide)
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(Sky.card.opacity(userReport == nil ? 0.55 : 1))
+            .overlay(Capsule().stroke((userReport == nil ? Sky.muted : Sky.tide).opacity(0.3), lineWidth: 1))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+    }
+
+    private func reportSummary(_ r: UserReport) -> String {
+        var parts: [String] = []
+        if let rain = r.rainPercent { parts.append(rain == 0 ? "dry" : "\(Int(rain))% rain") }
+        if let t = r.temperature { parts.append(Units.tempString(t)) }
+        if let w = r.windSpeed { parts.append("\(Units.windString(w)) wind") }
+        if let c = r.condition, let cond = WeatherCondition(rawValue: c) { parts.append(cond.rawValue.lowercased()) }
+        return parts.isEmpty ? "conditions" : parts.joined(separator: " · ")
+    }
+
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
@@ -65,6 +99,8 @@ struct HomeView: View {
                              moonData: moonData, astro: signals.astro, news: signals.news,
                              onOpenTab: onOpenTab)
                     .padding(.top, 12)
+
+                reportBar.padding(.top, 10)
 
                 if simpleMode {
                     SimpleNowView(consensus: consensus, failedSources: failedSources,
@@ -87,11 +123,25 @@ struct HomeView: View {
                 await signals.load(location: location, region: region, country: countryCode,
                                    forecast: consensus.dailyForecast)
             }
+            .task(id: location.coordinate.latitude) {
+                userReport = UserReportStore.shared.report(for: location)
+            }
         }
         .refreshable { await refresh?() }
         .overlay {
             if showTodayOverlay {
                 TodayOverlay(hourly: consensus.hourlyForecast, isPresented: $showTodayOverlay)
+            }
+            if showFeedback {
+                FeedbackOverlay(consensus: consensus, existing: userReport, isPresented: $showFeedback,
+                                onSubmit: { r in
+                                    UserReportStore.shared.save(r, for: location)
+                                    userReport = r.isEmpty ? nil : r
+                                },
+                                onClear: {
+                                    UserReportStore.shared.clear(for: location)
+                                    userReport = nil
+                                })
             }
         }
         .sheet(isPresented: $showWeekSheet) {
@@ -659,5 +709,178 @@ struct TodayOverlay: View {
                 .frame(width: 46, alignment: .trailing)
         }
         .padding(.vertical, 6.5)
+    }
+}
+
+// MARK: - Feedback / correction overlay
+
+/// "It says raining, it's dry." A semi-transparent overlay from the main screen
+/// where you correct any dimension with a couple of taps. Stored as a UserReport;
+/// on-device ground truth today, the People's Weather layer tomorrow.
+struct FeedbackOverlay: View {
+    let consensus: ConsensusWeather
+    let existing: UserReport?
+    @Binding var isPresented: Bool
+    let onSubmit: (UserReport) -> Void
+    let onClear: () -> Void
+
+    @State private var rain: Double?
+    @State private var temp: Double?
+    @State private var wind: Double?
+    @State private var condition: String?
+
+    init(consensus: ConsensusWeather, existing: UserReport?, isPresented: Binding<Bool>,
+         onSubmit: @escaping (UserReport) -> Void, onClear: @escaping () -> Void) {
+        self.consensus = consensus
+        self.existing = existing
+        self._isPresented = isPresented
+        self.onSubmit = onSubmit
+        self.onClear = onClear
+        _rain = State(initialValue: existing?.rainPercent)
+        _temp = State(initialValue: existing?.temperature)
+        _wind = State(initialValue: existing?.windSpeed)
+        _condition = State(initialValue: existing?.condition)
+    }
+
+    private let rainOpts: [(String, String, Double)] =
+        [("☀️", "Dry", 0), ("🌦", "Showers", 40), ("🌧", "Rain", 70), ("⛈", "Heavy", 100)]
+    private let windOpts: [(String, String, Double)] =
+        [("🍃", "Calm", 0), ("💨", "Breezy", 15), ("🌬", "Windy", 30), ("🌪", "Strong", 50)]
+    private var skyOpts: [(String, String, String)] {
+        [("☀️", "Clear", WeatherCondition.clearSky.rawValue), ("☁️", "Cloudy", WeatherCondition.overcast.rawValue),
+         ("🌧", "Rain", WeatherCondition.rain.rawValue), ("⛈", "Storm", WeatherCondition.thunderstorm.rawValue)]
+    }
+    private var nothingSet: Bool { rain == nil && temp == nil && wind == nil && condition == nil }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture { dismiss() }
+            VStack(spacing: 0) {
+                header
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 18) {
+                        rainRow; tempRow; windRow; skyRow
+                    }
+                    .padding(20)
+                }
+                footer
+            }
+            .background(Sky.navy.opacity(0.9))
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 26))
+            .overlay(RoundedRectangle(cornerRadius: 26).stroke(Sky.surface.opacity(0.5), lineWidth: 1))
+            .padding(.horizontal, 12).padding(.vertical, 40)
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        }
+    }
+
+    private func dismiss() { withAnimation(.easeOut(duration: 0.2)) { isPresented = false } }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("WHAT'S IT ACTUALLY DOING?")
+                    .font(.system(size: 11, weight: .bold)).kerning(1).foregroundColor(Sky.muted)
+                Text("Correct anything that's off").font(.system(size: 19, weight: .semibold)).foregroundColor(Sky.white)
+            }
+            Spacer()
+            Button { dismiss() } label: {
+                Image(systemName: "xmark.circle.fill").font(.system(size: 26)).foregroundColor(Sky.muted)
+            }.accessibilityLabel("Close")
+        }
+        .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 4)
+    }
+
+    private func dimHeader(_ label: String, _ forecast: String) -> some View {
+        HStack {
+            Text(label).font(.system(size: 15, weight: .semibold)).foregroundColor(Sky.white)
+            Spacer()
+            Text("forecast \(forecast)").font(.system(size: 12)).foregroundColor(Sky.muted)
+        }
+    }
+
+    private var rainRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            dimHeader("Rain", "\(Int(consensus.rainProbability.rounded()))%")
+            chips(rainOpts, selected: rain) { v in rain = (rain == v ? nil : v) }
+        }
+    }
+    private var windRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            dimHeader("Wind", Units.windString(consensus.windSpeed))
+            chips(windOpts, selected: wind) { v in wind = (wind == v ? nil : v) }
+        }
+    }
+    private var skyRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            dimHeader("Sky", consensus.condition.rawValue.lowercased())
+            chips(skyOpts, selected: condition) { v in condition = (condition == v ? nil : v) }
+        }
+    }
+    private var tempRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            dimHeader("Temp", Units.tempString(consensus.temperature))
+            HStack(spacing: 14) {
+                stepBtn("minus") { temp = (temp ?? consensus.temperature) - 1 }
+                Text(temp.map { Units.tempString($0) } ?? "tap to set")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .foregroundColor(temp == nil ? Sky.muted : Sky.white).frame(minWidth: 92)
+                stepBtn("plus") { temp = (temp ?? consensus.temperature) + 1 }
+                Spacer()
+                if temp != nil {
+                    Button("clear") { temp = nil }.font(.system(size: 12)).foregroundColor(Sky.muted)
+                }
+            }
+        }
+    }
+
+    private func stepBtn(_ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 15, weight: .bold)).foregroundColor(Sky.tide)
+                .frame(width: 40, height: 40).background(Sky.surface).clipShape(Circle())
+        }.buttonStyle(.plain)
+    }
+
+    private func chips<V: Equatable>(_ opts: [(String, String, V)], selected: V?,
+                                     tap: @escaping (V) -> Void) -> some View {
+        HStack(spacing: 8) {
+            ForEach(Array(opts.enumerated()), id: \.offset) { _, opt in
+                let isSel = selected == opt.2
+                Button { tap(opt.2) } label: {
+                    VStack(spacing: 3) {
+                        Text(opt.0).font(.system(size: 20))
+                        Text(opt.1).font(.system(size: 10, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 9)
+                    .background(isSel ? Sky.tide.opacity(0.2) : Sky.surface.opacity(0.5))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(isSel ? Sky.tide : .clear, lineWidth: 1.5))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .foregroundColor(isSel ? Sky.white : Sky.text)
+                }.buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            if existing != nil {
+                Button { onClear(); dismiss() } label: {
+                    Text("Clear").font(.system(size: 14, weight: .medium)).foregroundColor(Sky.muted)
+                        .frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 14))
+                }.buttonStyle(.plain)
+            }
+            Button {
+                onSubmit(UserReport(reportedAt: Date(), rainPercent: rain, temperature: temp,
+                                    windSpeed: wind, condition: condition))
+                dismiss()
+            } label: {
+                Text("Save report").font(.system(size: 14, weight: .semibold)).foregroundColor(Sky.navy)
+                    .frame(maxWidth: .infinity).padding(.vertical, 13)
+                    .background(nothingSet ? Sky.tide.opacity(0.4) : Sky.tide)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            }.buttonStyle(.plain).disabled(nothingSet)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
     }
 }

@@ -203,3 +203,47 @@ private struct PooledEntry: Encodable {
     let source: String; let metric: String; let count: Int; let sumAbsError: Double
 }
 private struct PooledContribution: Encodable { let grid: String; let entries: [PooledEntry] }
+
+// MARK: - User conditions report (crowd correction, local ground truth)
+
+/// What the user says it's *actually* doing right now — their correction to the
+/// consensus. "It says raining, it's dry" → rain 0. Stored per ~11 km cell and
+/// treated as fresh for a few hours (weather moves on). This is the seed of the
+/// People's Weather layer: on-device today, poolable later, and — because it's an
+/// observation, not a forecast — a candidate truth for the accuracy ledger.
+struct UserReport: Codable, Equatable {
+    var reportedAt: Date
+    var rainPercent: Double?    // 0…100
+    var temperature: Double?    // °C (engine unit)
+    var windSpeed: Double?      // km/h
+    var condition: String?      // WeatherCondition.rawValue
+
+    var isEmpty: Bool { rainPercent == nil && temperature == nil && windSpeed == nil && condition == nil }
+    func isFresh(_ now: Date = Date()) -> Bool { now.timeIntervalSince(reportedAt) < 3 * 3600 }
+}
+
+final class UserReportStore {
+    static let shared = UserReportStore()
+
+    // Corrections are local but not pinpoint — ~11 km, so a report covers the area
+    // you can actually see out the window without leaking a precise location.
+    private static let precision = 0.1
+    private func key(_ loc: CLLocation) -> String {
+        DiskCache.gridKey("report", loc, precision: Self.precision)
+    }
+
+    /// The user's current, still-relevant correction for here, if any.
+    func report(for loc: CLLocation) -> UserReport? {
+        guard let r = DiskCache.loadDurable(UserReport.self, key: key(loc)), r.isFresh(), !r.isEmpty
+        else { return nil }
+        return r
+    }
+
+    func save(_ report: UserReport, for loc: CLLocation) {
+        DiskCache.saveDurable(report, key: key(loc))
+    }
+
+    func clear(for loc: CLLocation) {
+        DiskCache.saveDurable(UserReport(reportedAt: Date()), key: key(loc))
+    }
+}
