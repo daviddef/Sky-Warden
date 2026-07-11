@@ -81,7 +81,9 @@ struct WeatherMapView: View {
         guard !found.isEmpty else { loading = false; unavailable = true; return }
 
         frames = found
-        index = found.count - 1
+        // Open at "now" — the latest observation — so the animation reads
+        // past → now → forecast when it plays, not from two hours ago.
+        index = found.lastIndex(where: { !$0.isFuture }) ?? (found.count - 1)
         loading = false
         warming = true          // MapCanvas will report its camera, and `warm` takes it from there
     }
@@ -155,10 +157,30 @@ struct WeatherMapView: View {
                 ), in: 0...Double(max(1, frames.count - 1)), step: 1)
                 .tint(Sky.tide)
                 .disabled(warming)
+                // A tick where the past meets the forecast, so "now" is visible on
+                // the track rather than only in the label.
+                .overlay {
+                    if let nf = nowFraction {
+                        GeometryReader { g in
+                            Rectangle().fill(Sky.white.opacity(0.45))
+                                .frame(width: 1.5, height: 15)
+                                .position(x: g.size.width * nf, y: g.size.height / 2)
+                        }
+                    }
+                }
 
-                Text(currentFrame.map { timeLabel($0.date) } ?? "—")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Sky.white).frame(width: 62, alignment: .trailing)
+                VStack(alignment: .trailing, spacing: 2) {
+                    if currentFrame?.isFuture == true {
+                        Text("FORECAST").font(.system(size: 7, weight: .bold)).kerning(0.4)
+                            .foregroundColor(Sky.amber)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Sky.amber.opacity(0.18)).clipShape(Capsule())
+                    }
+                    Text(currentFrame.map(relativeLabel) ?? "—")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(currentFrame?.isFuture == true ? Sky.amber : Sky.white)
+                }
+                .frame(width: 70, alignment: .trailing)
             }
             if layer == .radar { radarLegend }
 
@@ -212,9 +234,21 @@ struct WeatherMapView: View {
         .background(Sky.navy)
     }
 
-    private func timeLabel(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"
-        return f.string(from: d)
+    /// Time relative to now, so the scrubber reads as a journey through time:
+    /// "-40m" (observed), "now", "+30m" (forecast). Clearer than a wall clock for
+    /// answering "where is this heading?".
+    private func relativeLabel(_ frame: MapFrame) -> String {
+        let mins = Int((frame.date.timeIntervalSinceNow / 60).rounded())
+        if abs(mins) <= 4 { return "now" }
+        return mins > 0 ? "+\(mins)m" : "\(mins)m"
+    }
+
+    /// Where "now" sits along the scrubber (0…1), or nil when there's no forecast
+    /// half to divide off.
+    private var nowFraction: Double? {
+        guard frames.count > 1, let lastPast = frames.lastIndex(where: { !$0.isFuture }),
+              lastPast < frames.count - 1 else { return nil }
+        return Double(lastPast) / Double(frames.count - 1)
     }
 }
 

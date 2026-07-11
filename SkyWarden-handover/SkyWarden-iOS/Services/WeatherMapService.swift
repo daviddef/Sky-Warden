@@ -31,6 +31,10 @@ import UIKit
 struct MapFrame: Hashable {
     let date: Date
     let token: String
+    /// A RainViewer nowcast frame — a forecast of where the radar echoes are
+    /// heading, not an observation. The scrubber flags these so a projection is
+    /// never mistaken for a measurement.
+    var isFuture: Bool = false
 }
 
 struct TileLayerSpec {
@@ -184,10 +188,19 @@ struct WeatherMapService {
               let past = radar["past"] as? [[String: Any]]
         else { return [] }
 
-        return past.suffix(spec.frameCount).compactMap { entry in
+        let pastFrames: [MapFrame] = past.suffix(spec.frameCount).compactMap { entry in
             guard let t = entry["time"] as? Double, let path = entry["path"] as? String else { return nil }
             return MapFrame(date: Date(timeIntervalSince1970: t), token: host + path)
         }
+        // The forecast half of the story: RainViewer's nowcast projects the echoes
+        // ~2 h ahead, so the animation carries on past "now" and shows where the
+        // weather is heading — flagged as a forecast, never an observation.
+        let nowcast = (radar["nowcast"] as? [[String: Any]]) ?? []
+        let futureFrames: [MapFrame] = nowcast.compactMap { entry in
+            guard let t = entry["time"] as? Double, let path = entry["path"] as? String else { return nil }
+            return MapFrame(date: Date(timeIntervalSince1970: t), token: host + path, isFuture: true)
+        }
+        return pastFrames + futureFrames
     }
 
     /// GIBS latency varies (GOES has gaps; Himawari runs ~40–60 min behind), so
