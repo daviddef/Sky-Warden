@@ -33,7 +33,7 @@ Status: ✅ done · 🟡 partial · ⬜ not started.
 | 1 | **Visible accuracy ledger** — "most accurate here lately", per-location, per-source | MOAT | M | ✅ MostAccurateCard on Detailed Now (learning/weighting states) → Sources (f22c981) |
 | 2 | **Confidence signal on every forecast** — High/Med/Low from spread; widen range when unsure | MOAT | M | 🟡 confidence % on dial; Simple footer says "N agree · confident"; "soften headline when unsure" still to do |
 | 3 | **Disagreement flags, only when material** — "4 of 9 say showers, 5 say dry" | MOAT | S | ✅ Simple footer: "Sources split on rain: 10–60% — worth a backup plan" (f377a70) |
-| 4 | **Precip nowcast + rain-start/stop push** — the Dark Sky job | STAKES | M | ⬜ (map has RainViewer nowcast frames; no per-location minute timeline or notifications) |
+| 4 | **Precip nowcast + rain-start/stop push** — the Dark Sky job | STAKES | M | ✅ Open-Meteo minutely_15 → "Rain starting in ~20 min" banner + provisional notification (fg + bg) (1a1eafb); 🟡 could add a full minute-by-minute strip |
 | 5 | **Fast, un-paywalled radar with future frames** | STAKES | M | ✅ single mode + nowcast future frames + instant base map / "Sharpening" pill (8acc28d) |
 | 6 | **Widgets + Apple Watch complication w/ confidence dot** | STAKES | M | ⬜ watch scaffolding exists; complications + widgets to build |
 | 7 | **"Will it rain on my ___" activity planner** — decision framing | MOAT-adj | M | ⬜ (Plans tab is a stub to build on) |
