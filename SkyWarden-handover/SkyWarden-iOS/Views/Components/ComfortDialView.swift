@@ -280,6 +280,9 @@ struct ComfortDialView: View {
                     Text("\(metric.format(mm.0))–\(metric.format(mm.1))")
                         .font(.system(size: 9)).foregroundColor(Sky.muted)
                 }
+                if let peak = r.peak {
+                    Text(peak.phrase).font(.system(size: 9, weight: .medium)).foregroundColor(color.opacity(0.9))
+                }
             }
         } else {
             let s = Comfort.overallScore(data)

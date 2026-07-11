@@ -221,6 +221,61 @@ extension Color {
     }
 }
 
+// MARK: - Intraday timing
+
+/// The most intense hour of the rest of today for a metric, with a plain phrase.
+struct IntradayPeak {
+    let value: Double
+    let time: Date
+    let phrase: String     // "peaks 1pm", "windiest 4pm", "rain likeliest 3pm"
+
+    static func hourLabel(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "ha"
+        return f.string(from: d).lowercased()
+    }
+
+    /// The metric's peak over the rest of today, or nil when nothing about it is
+    /// worth flagging (a metric that stays low all day gets no callout).
+    static func of(_ metric: ComfortMetric, hourly: [ConsensusHourly], now: Date = Date()) -> IntradayPeak? {
+        let horizon = now.addingTimeInterval(15 * 3600)
+        let hours = hourly.filter { $0.time >= now.addingTimeInterval(-1800) && $0.time <= horizon }
+        guard hours.count >= 2 else { return nil }
+
+        let series: [(time: Date, value: Double)] = hours.compactMap { h in
+            switch metric {
+            case .rain: (h.time, h.rainProbability)
+            case .wind: (h.time, h.windSpeed)
+            case .uv:   h.uvIndex.map { (h.time, $0) }
+            case .temp: (h.time, h.temperature)
+            case .humidity: nil            // no hourly humidity in the model
+            }
+        }
+        guard let peak = series.max(by: { $0.value < $1.value }) else { return nil }
+
+        // Only speak up when the peak is actually notable.
+        let notable: Bool
+        switch metric {
+        case .rain: notable = peak.value >= 30
+        case .wind: notable = peak.value >= 20
+        case .uv:   notable = peak.value >= 3
+        case .temp: notable = true
+        case .humidity: notable = false
+        }
+        guard notable else { return nil }
+
+        let at = hourLabel(peak.time)
+        let phrase: String
+        switch metric {
+        case .rain: phrase = "most likely \(at)"
+        case .wind: phrase = "windiest \(at)"
+        case .uv:   phrase = "peaks \(Int(peak.value.rounded())) at \(at)"
+        case .temp: phrase = "warmest \(at)"
+        case .humidity: phrase = ""
+        }
+        return IntradayPeak(value: peak.value, time: peak.time, phrase: phrase)
+    }
+}
+
 // MARK: - Per-ring reading (assembled from consensus + raw source readings)
 struct RingReading: Identifiable {
     let metric: ComfortMetric
@@ -228,6 +283,7 @@ struct RingReading: Identifiable {
     let minMax: (Double, Double)?
     let perSource: [(source: WeatherSource, value: Double)]
     let spread: Double
+    var peak: IntradayPeak? = nil
 
     var id: String { metric.rawValue }
     var score: Double { metric.score(value) }
@@ -296,7 +352,8 @@ struct ComfortData {
             // Trimmed with 4+ sources so extra models don't inflate the spread.
             let spread = robustSpread(per.map(\.value)) ?? 0
             return RingReading(metric: m, value: value(m), minMax: minMax(m),
-                               perSource: per, spread: spread)
+                               perSource: per, spread: spread,
+                               peak: IntradayPeak.of(m, hourly: hourly))
         }
     }
 }

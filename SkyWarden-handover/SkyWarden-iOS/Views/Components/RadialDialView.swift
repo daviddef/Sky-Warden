@@ -234,13 +234,17 @@ struct RadialDialView: View {
                     .foregroundColor(color)
                 Text(metric.comfortLabel(r.value))
                     .font(.system(size: 11, weight: .semibold)).foregroundColor(color)
+                if let mm = r.minMax {
+                    Text("\(metric.format(mm.0))–\(metric.format(mm.1))")
+                        .font(.system(size: 8.5)).foregroundColor(Sky.muted)
+                }
+                if let peak = r.peak {
+                    Text(peak.phrase).font(.system(size: 8.5, weight: .medium)).foregroundColor(color.opacity(0.9))
+                }
                 if r.hasFlag {
                     Text("\(r.isMajor ? "🚨" : "⚠️") \(metric.format(r.spread)) apart")
                         .font(.system(size: 8.5, weight: .medium))
                         .foregroundColor(r.isMajor ? Sky.red : Sky.amber)
-                } else if let mm = r.minMax {
-                    Text("\(metric.format(mm.0))–\(metric.format(mm.1))")
-                        .font(.system(size: 8.5)).foregroundColor(Sky.muted)
                 }
             }
             .transition(.scale(scale: 0.9).combined(with: .opacity))

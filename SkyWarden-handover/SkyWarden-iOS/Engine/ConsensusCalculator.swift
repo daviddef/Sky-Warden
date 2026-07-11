@@ -135,12 +135,22 @@ struct ConsensusCalculator {
                 }
                 return false
             }
+            // Hourly UV: the mean of whatever sources publish it at this hour
+            // (many models don't), so the intraday UV peak has a value to find.
+            let uvs = readings.compactMap { r in
+                r.hourlyForecast.min(by: {
+                    abs($0.time.timeIntervalSince(hour.time)) < abs($1.time.timeIntervalSince(hour.time))
+                }).flatMap(\.uvIndex)
+            }
+            let uv = uvs.isEmpty ? nil : uvs.reduce(0, +) / Double(uvs.count)
+
             return ConsensusHourly(
                 time:             hour.time,
                 temperature:      hour.temperature,
                 rainProbability:  hour.rainProbability ?? 0,
                 condition:        hour.condition,
                 windSpeed:        hour.windSpeed,
+                uvIndex:          uv,
                 hasDisagreement:  hasDisagreement
             )
         }

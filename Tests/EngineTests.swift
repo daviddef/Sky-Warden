@@ -1093,3 +1093,60 @@ final class WarningGeometryTests: XCTestCase {
         XCTAssertTrue(feats[0].area.contains(CLLocationCoordinate2D(latitude: -27.4, longitude: 153.0)))
     }
 }
+
+// MARK: - Intraday peak timing
+final class IntradayPeakTests: XCTestCase {
+
+    private let t0 = Date(timeIntervalSince1970: 1_783_000_000)   // arbitrary "now"
+
+    private func hour(_ offsetH: Double, temp: Double = 20, rain: Double = 0,
+                      wind: Double = 5, uv: Double? = nil) -> ConsensusHourly {
+        ConsensusHourly(time: t0.addingTimeInterval(offsetH * 3600), temperature: temp,
+                        rainProbability: rain, condition: .clearSky, windSpeed: wind,
+                        uvIndex: uv, hasDisagreement: false)
+    }
+
+    func testFindsTheRainPeakHour() {
+        let hrs = [hour(1, rain: 10), hour(2, rain: 80), hour(3, rain: 40)]
+        let peak = IntradayPeak.of(.rain, hourly: hrs, now: t0)!
+        XCTAssertEqual(peak.value, 80, accuracy: 0.001)
+        XCTAssertEqual(peak.time, t0.addingTimeInterval(2 * 3600))
+        XCTAssertTrue(peak.phrase.contains("most likely"))
+    }
+
+    func testWindPeakPhrase() {
+        let hrs = [hour(1, wind: 10), hour(4, wind: 35), hour(6, wind: 15)]
+        let peak = IntradayPeak.of(.wind, hourly: hrs, now: t0)!
+        XCTAssertEqual(peak.value, 35, accuracy: 0.001)
+        XCTAssertTrue(peak.phrase.hasPrefix("windiest"))
+    }
+
+    func testUVPeakNeedsHourlyUV() {
+        let withUV = [hour(1, uv: 3), hour(2, uv: 9), hour(3, uv: 6)]
+        let peak = IntradayPeak.of(.uv, hourly: withUV, now: t0)!
+        XCTAssertEqual(peak.value, 9, accuracy: 0.001)
+        XCTAssertTrue(peak.phrase.contains("9"))
+
+        let noUV = [hour(1), hour(2), hour(3)]
+        XCTAssertNil(IntradayPeak.of(.uv, hourly: noUV, now: t0), "no hourly UV → no callout")
+    }
+
+    /// A metric that stays low all day earns no callout — the whole point is to
+    /// flag when something is worth watching, not to narrate a calm day.
+    func testLowMetricGivesNoCallout() {
+        XCTAssertNil(IntradayPeak.of(.rain, hourly: [hour(1, rain: 5), hour(2, rain: 10)], now: t0))
+        XCTAssertNil(IntradayPeak.of(.wind, hourly: [hour(1, wind: 6), hour(2, wind: 9)], now: t0))
+        XCTAssertNil(IntradayPeak.of(.uv, hourly: [hour(1, uv: 1), hour(2, uv: 2)], now: t0))
+    }
+
+    func testOnlyLooksAtTheRestOfToday() {
+        // A huge peak 20h out must be ignored — that's tomorrow's problem.
+        let hrs = [hour(1, rain: 40), hour(2, rain: 35), hour(20, rain: 100)]
+        let peak = IntradayPeak.of(.rain, hourly: hrs, now: t0)!
+        XCTAssertEqual(peak.value, 40, accuracy: 0.001, "the 20h-out peak is beyond the horizon")
+    }
+
+    func testHumidityHasNoIntradayCallout() {
+        XCTAssertNil(IntradayPeak.of(.humidity, hourly: [hour(1), hour(2)], now: t0))
+    }
+}

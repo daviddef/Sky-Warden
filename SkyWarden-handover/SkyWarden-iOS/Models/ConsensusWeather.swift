@@ -107,6 +107,7 @@ struct ConsensusHourly: Identifiable {
     let rainProbability: Double
     let condition: WeatherCondition
     let windSpeed: Double
+    var uvIndex: Double? = nil     // nil when no source publishes hourly UV
     let hasDisagreement: Bool
 
     var hourLabel: String {
