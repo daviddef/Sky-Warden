@@ -38,8 +38,28 @@ struct SimpleNowView: View {
         }
         .padding(.top, 18).padding(.bottom, 8)
         .frame(maxWidth: .infinity)
+        .background(heroBackdrop, alignment: .top)
         .contentShape(Rectangle())
         .onTapGesture { onOpenDetail?() }
+    }
+
+    /// A soft time-of-day wash behind the hero — dawn amber, midday blue, dusk
+    /// violet, night deep — so the Simple view feels alive without clutter. It
+    /// fades to nothing before the content below, keeping text clean.
+    private var heroBackdrop: some View {
+        let hour = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let h = Double(hour.hour ?? 12) + Double(hour.minute ?? 0) / 60
+        let top: Color
+        switch h {
+        case 5..<7.5:   top = Color(hex: "8B5A6B")   // dawn
+        case 7.5..<16:  top = Color(hex: "3E7AB0")   // day
+        case 16..<18.5: top = Color(hex: "B0587A")   // dusk
+        default:        top = Color(hex: "1B2748")   // night
+        }
+        return LinearGradient(colors: [top.opacity(0.35), .clear],
+                              startPoint: .top, endPoint: .bottom)
+            .frame(height: 300)
+            .allowsHitTesting(false)
     }
 
     // MARK: - Hero
