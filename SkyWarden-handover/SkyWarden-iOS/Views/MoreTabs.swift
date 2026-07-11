@@ -356,10 +356,45 @@ private struct AstroCard: View {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// MARK: - Space stock ticker (filled in once the quote endpoint is wired)
+// MARK: - Space stock ticker
 // ────────────────────────────────────────────────────────────────────────────
 struct SpaceTickerStrip: View {
-    var body: some View { EmptyView() }
+    @State private var quotes: [StockQuote] = []
+
+    var body: some View {
+        // A concrete container (not a Group) so `.task` fires even before any
+        // quotes arrive — a Group that resolves to EmptyView never runs it.
+        VStack(alignment: .leading, spacing: 6) {
+            if !quotes.isEmpty {
+                Text("🚀 SPACE MARKETS · DELAYED")
+                    .font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(quotes) { q in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(q.symbol).font(.system(size: 12, weight: .bold)).foregroundColor(Sky.white)
+                                HStack(spacing: 5) {
+                                    Text(String(format: "$%.2f", q.price))
+                                        .font(.system(size: 11)).foregroundColor(Sky.text)
+                                    Text(String(format: "%+.1f%%", q.changePct))
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(q.up ? Sky.green : Sky.red)
+                                }
+                            }
+                            .frame(minWidth: 82, alignment: .leading)
+                            .padding(.horizontal, 11).padding(.vertical, 8)
+                            .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10)
+                                .stroke((q.up ? Sky.green : Sky.red).opacity(0.25), lineWidth: 1))
+                        }
+                    }
+                }
+                .padding(.bottom, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task { quotes = await StockService().fetch() }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

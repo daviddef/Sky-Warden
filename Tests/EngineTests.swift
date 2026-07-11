@@ -1337,3 +1337,4 @@ final class METARServiceTests: XCTestCase {
         XCTAssertEqual(best?.icao, "EGLC", "a fresh real-format station must be selected, not dropped")
     }
 }
+

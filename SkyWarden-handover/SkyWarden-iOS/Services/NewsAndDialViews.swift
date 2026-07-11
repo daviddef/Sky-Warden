@@ -407,3 +407,69 @@ private struct RingPill: View {
         }
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// MARK: - Space / aerospace stock quotes
+// ────────────────────────────────────────────────────────────────────────────
+// Delayed quotes for space-adjacent tickers, shown alongside space & weather news.
+// Yahoo Finance's v8 chart endpoint is keyless — it just needs a browser UA — and
+// we cache each symbol for 5 min so a light poll stays well under its per-IP rate
+// limit. Unofficial API: query1 → query2 failover, and a graceful empty result if
+// Yahoo ever changes it (the strip simply doesn't render).
+
+struct StockQuote: Codable, Identifiable {
+    let symbol: String
+    let name: String
+    let price: Double
+    let changePct: Double
+    var id: String { symbol }
+    var up: Bool { changePct >= 0 }
+}
+
+struct StockService {
+    /// SpaceX is private; these are the liquid space/aerospace proxies.
+    static let spaceTickers = ["RKLB", "ASTS", "LUNR", "LMT", "NOC", "BA", "SPCE"]
+
+    func fetch(_ symbols: [String] = spaceTickers) async -> [StockQuote] {
+        let quotes = await withTaskGroup(of: StockQuote?.self) { group -> [StockQuote] in
+            for s in symbols { group.addTask { await Self.quote(s) } }
+            var out: [StockQuote] = []
+            for await q in group { if let q { out.append(q) } }
+            return out
+        }
+        // Preserve the requested order (task groups complete out of order).
+        return symbols.compactMap { s in quotes.first { $0.symbol == s } }
+    }
+
+    private static func quote(_ symbol: String) async -> StockQuote? {
+        if let hit = DiskCache.load(StockQuote.self, key: "stock:\(symbol)", ttl: 300) { return hit }
+        for host in ["query1", "query2"] {
+            guard let url = URL(string:
+                "https://\(host).finance.yahoo.com/v8/finance/chart/\(symbol)?interval=1d&range=1d")
+            else { continue }
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 8
+            req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                         forHTTPHeaderField: "User-Agent")
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                guard code == 200,
+                      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let chart = root["chart"] as? [String: Any],
+                      let meta = (chart["result"] as? [[String: Any]])?.first?["meta"] as? [String: Any],
+                      let price = (meta["regularMarketPrice"] as? NSNumber)?.doubleValue,
+                      let prev = (meta["chartPreviousClose"] as? NSNumber)?.doubleValue, prev != 0
+                else { continue }
+                let name = (meta["shortName"] as? String) ?? symbol
+                let q = StockQuote(symbol: symbol, name: name, price: price,
+                                   changePct: (price - prev) / prev * 100)
+                DiskCache.save(q, key: "stock:\(symbol)")
+                return q
+            } catch {
+                continue
+            }
+        }
+        return nil
+    }
+}
