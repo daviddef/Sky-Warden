@@ -230,7 +230,9 @@ struct IntradayPeak {
     let phrase: String     // "peaks 1pm", "windiest 4pm", "rain likeliest 3pm"
 
     static func hourLabel(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "ha"
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")   // always 12-hour "4PM", not the 24-hour locale
+        f.dateFormat = "ha"
         return f.string(from: d).lowercased()
     }
 

@@ -18,6 +18,7 @@ struct HomeView: View {
     @State private var selectedMetric: ComfortMetric?
     @State private var onThisDay: OnThisDay?
     @State private var warnings: [WeatherWarning] = []
+    @AppStorage("display.nowSimple") private var simpleMode = true
     @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
 
     private var dialStyle: DialStyle { DialStyle(rawValue: dialStyleRaw) ?? .arc }
@@ -43,6 +44,41 @@ struct HomeView: View {
                         .padding(.horizontal, 16).padding(.top, 12)
                 }
 
+                modeToggle.padding(.horizontal, 16).padding(.top, 12)
+
+                if simpleMode {
+                    SimpleNowView(consensus: consensus, failedSources: failedSources,
+                                  confidence: confidence, placeName: placeName,
+                                  onOpenDetail: { withAnimation { simpleMode = false } })
+                    Spacer(minLength: 20)
+                } else {
+                    detailedContent
+                }
+            }
+            .task(id: location.coordinate.latitude) {
+                onThisDay = try? await HistoricalService().onThisDay(location: location)
+            }
+            .task(id: location.coordinate.latitude) {
+                warnings = await WarningsService().warnings(near: location)
+            }
+        }
+    }
+
+    /// The Simple ↔ Detailed switch. Simple is the default because the whole
+    /// point is to answer "users find it complicated" on first glance; the dial
+    /// is one tap away.
+    private var modeToggle: some View {
+        Picker("View", selection: $simpleMode) {
+            Text("Simple").tag(true)
+            Text("Detailed").tag(false)
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private var detailedContent: some View {
+        Group {
+            VStack(spacing: 0) {
                 ratingBanner
                     .padding(.horizontal, 20).padding(.top, 14)
 
@@ -69,12 +105,6 @@ struct HomeView: View {
 
                 Spacer(minLength: 20)
             }
-        }
-        .task(id: location.coordinate.latitude) {
-            onThisDay = try? await HistoricalService().onThisDay(location: location)
-        }
-        .task(id: location.coordinate.latitude) {
-            warnings = await WarningsService().warnings(near: location)
         }
     }
 
