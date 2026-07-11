@@ -17,3 +17,6 @@ xcuserdata/
 
 # WeatherKit REST private key (if you ever use the REST path)
 AuthKey_*.p8
+
+# Supabase CLI local link state
+supabase/.temp/
