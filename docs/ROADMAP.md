@@ -30,9 +30,9 @@ Status: ✅ done · 🟡 partial · ⬜ not started.
 
 | # | Feature | Tag | Size | Status |
 |---|---------|-----|------|--------|
-| 1 | **Visible accuracy ledger** — "most accurate here lately", per-location, per-source | MOAT | M | 🟡 ledger exists (Sources tab); not yet a first-class trust panel |
-| 2 | **Confidence signal on every forecast** — High/Med/Low from spread; widen range when unsure | MOAT | M | 🟡 confidence % shown on dial; not on Simple headline / not "soften when unsure" |
-| 3 | **Disagreement flags, only when material** — "4 of 9 say showers, 5 say dry" | MOAT | S | 🟡 flags exist on rings/week; not phrased in plain English on Now |
+| 1 | **Visible accuracy ledger** — "most accurate here lately", per-location, per-source | MOAT | M | ✅ MostAccurateCard on Detailed Now (learning/weighting states) → Sources (f22c981) |
+| 2 | **Confidence signal on every forecast** — High/Med/Low from spread; widen range when unsure | MOAT | M | 🟡 confidence % on dial; Simple footer says "N agree · confident"; "soften headline when unsure" still to do |
+| 3 | **Disagreement flags, only when material** — "4 of 9 say showers, 5 say dry" | MOAT | S | ✅ Simple footer: "Sources split on rain: 10–60% — worth a backup plan" (f377a70) |
 | 4 | **Precip nowcast + rain-start/stop push** — the Dark Sky job | STAKES | M | ⬜ (map has RainViewer nowcast frames; no per-location minute timeline or notifications) |
 | 5 | **Fast, un-paywalled radar with future frames** | STAKES | M | ✅ map + nowcast future frames (2026-07); 🟡 consolidating to one mode |
 | 6 | **Widgets + Apple Watch complication w/ confidence dot** | STAKES | M | ⬜ watch scaffolding exists; complications + widgets to build |
