@@ -12,27 +12,31 @@ struct ContentView: View {
     // which reads UserDefaults, so they need a reason to re-evaluate).
     @AppStorage(UnitKey.temperature) private var temperatureUnit = TemperatureUnit.celsius.rawValue
     @AppStorage(UnitKey.wind)        private var windUnit        = WindUnit.kmh.rawValue
+    @AppStorage("display.nowSimple") private var nowSimple       = true
     // Initial tab (overridable via SKYWARDEN_TAB env var for screenshots/QA).
     @State private var selectedTab: Tab = {
         if let t = ProcessInfo.processInfo.environment["SKYWARDEN_TAB"], let tab = Tab(rawValue: t) { return tab }
         return .now
     }()
 
+    // `week` and `today` were retired — the week lives on the Detail at-a-glance
+    // and the day opens as an overlay when you tap the temperature. `sky` now
+    // folds in news (astronomy + space + weather stories).
     enum Tab: String, CaseIterable, Identifiable {
-        case now, scene, map, today, week, tides, plans, uv, sky, news, sources
+        case now, scene, map, tides, plans, uv, sky, sources
         var id: String { rawValue }
         var emoji: String {
             switch self {
-            case .now: "🌤"; case .scene: "🏖"; case .map: "🗺"; case .today: "📋"; case .week: "📅"
+            case .now: "🌤"; case .scene: "🏖"; case .map: "🗺"
             case .tides: "🌊"; case .plans: "📆"; case .uv: "☀️"; case .sky: "🔭"
-            case .news: "📰"; case .sources: "📡"
+            case .sources: "📡"
             }
         }
         var label: String {
             switch self {
-            case .now: "Now"; case .scene: "Scene"; case .map: "Map"; case .today: "Today"; case .week: "Week"
+            case .now: "Now"; case .scene: "Scene"; case .map: "Map"
             case .tides: "Tides"; case .plans: "Plans"; case .uv: "UV"; case .sky: "Sky"
-            case .news: "News"; case .sources: "Sources"
+            case .sources: "Sources"
             }
         }
     }
@@ -62,7 +66,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             NavBar(title: locationManager.placeName ?? "Current Location",
                    fetchState: aggregator.fetchState,
-                   onRefresh: { Task { await aggregator.refresh(location: location, force: true) } },
+                   nowMode: selectedTab == .now ? $nowSimple : nil,
                    onSettings: { showSettings = true })
 
             switch aggregator.fetchState {
@@ -93,16 +97,12 @@ struct ContentView: View {
                      location: location, placeName: locationManager.placeName,
                      tideDay: aggregator.tideDay, moonData: aggregator.moonData,
                      region: locationManager.region, countryCode: locationManager.countryCode,
-                     onOpenTab: { selectedTab = $0 })
+                     onOpenTab: { selectedTab = $0 },
+                     refresh: { await aggregator.refresh(location: location, force: true) })
         case .scene:
             SceneView(consensus: consensus, tideDay: aggregator.tideDay)
         case .map:
             WeatherMapView(location: location)
-        case .today:
-            TodayDetailView(hourly: consensus.hourlyForecast)
-        case .week:
-            WeekView(daily: consensus.dailyForecast,
-                     disagreementCount: consensus.dailyForecast.filter(\.hasDisagreement).count)
         case .tides:
             TidesDetailView(tideDay: aggregator.tideDay, moonData: aggregator.moonData)
         case .plans:
@@ -110,11 +110,8 @@ struct ContentView: View {
         case .uv:
             UVView(consensus: consensus)
         case .sky:
-            SkyView(location: location)
-        case .news:
-            NewsView(location: location,
-                     region: locationManager.region,
-                     countryCode: locationManager.countryCode)
+            SkyView(location: location,
+                    region: locationManager.region, countryCode: locationManager.countryCode)
         case .sources:
             SourcesView(consensus: consensus, location: location)
         }
@@ -131,23 +128,29 @@ struct ContentView: View {
 private struct NavBar: View {
     let title: String
     let fetchState: FetchState
-    let onRefresh: () -> Void
+    /// The Simple↔Detailed toggle, present only on the Now tab. Pull-to-refresh
+    /// replaced the old refresh button, so the bar stays quiet.
+    var nowMode: Binding<Bool>? = nil
     let onSettings: () -> Void
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             Image(systemName: "location.fill").font(.system(size: 12)).foregroundColor(Sky.muted)
             Text(title).font(SkyType.body).fontWeight(.medium).foregroundColor(Sky.white)
+            if case .loading = fetchState {
+                ProgressView().tint(Sky.muted).scaleEffect(0.6)
+            }
             Spacer()
-            Button(action: onRefresh) {
-                if case .loading = fetchState {
-                    ProgressView().tint(Sky.muted).scaleEffect(0.7)
-                } else {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 14)).foregroundColor(Sky.muted)
+            if let nowMode {
+                Button { withAnimation(.easeInOut(duration: 0.2)) { nowMode.wrappedValue.toggle() } } label: {
+                    Image(systemName: nowMode.wrappedValue ? "gauge.with.dots.needle.bottom.50percent"
+                                                           : "square.text.square")
+                        .font(.system(size: 16)).foregroundColor(Sky.muted)
                 }
+                .accessibilityLabel(nowMode.wrappedValue ? "Show detailed view" : "Show simple view")
             }
             Button(action: onSettings) {
-                Image(systemName: "gearshape").font(.system(size: 14)).foregroundColor(Sky.muted)
+                Image(systemName: "gearshape").font(.system(size: 15)).foregroundColor(Sky.muted)
             }
             .accessibilityLabel("Settings")
         }

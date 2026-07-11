@@ -17,10 +17,13 @@ struct HomeView: View {
     var countryCode: String? = nil
     /// Lets the summary grid jump straight to the tab it summarises.
     var onOpenTab: ((ContentView.Tab) -> Void)? = nil
+    var refresh: (() async -> Void)? = nil
 
     @State private var selectedMetric: ComfortMetric?
     @State private var onThisDay: OnThisDay?
     @State private var warnings: [WeatherWarning] = []
+    @State private var showTodayOverlay = false
+    @State private var showWeekSheet = false
     @StateObject private var signals = HomeSignals()
     @AppStorage("display.nowSimple") private var simpleMode = true
     @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
@@ -48,20 +51,19 @@ struct HomeView: View {
                         .padding(.horizontal, 16).padding(.top, 12)
                 }
 
-                modeToggle.padding(.horizontal, 16).padding(.top, 12)
-
                 // Ambient signals both modes share: a calendar event the weather
                 // threatens, the next tide, the moon, a sky event coming up, a
                 // serious weather story. Each shows only when it has something to say.
                 SignalsStrip(calendarEvents: signals.calendarEvents, tideDay: tideDay,
                              moonData: moonData, astro: signals.astro, news: signals.news,
                              onOpenTab: onOpenTab)
-                    .padding(.top, 10)
+                    .padding(.top, 12)
 
                 if simpleMode {
                     SimpleNowView(consensus: consensus, failedSources: failedSources,
                                   confidence: confidence, placeName: placeName,
-                                  onOpenDetail: { withAnimation { simpleMode = false } })
+                                  onOpenDetail: { withAnimation { simpleMode = false } },
+                                  onTapTemperature: { showTodayOverlay = true })
                     Spacer(minLength: 20)
                 } else {
                     detailedContent
@@ -78,17 +80,30 @@ struct HomeView: View {
                                    forecast: consensus.dailyForecast)
             }
         }
-    }
-
-    /// The Simple ↔ Detailed switch. Simple is the default because the whole
-    /// point is to answer "users find it complicated" on first glance; the dial
-    /// is one tap away.
-    private var modeToggle: some View {
-        Picker("View", selection: $simpleMode) {
-            Text("Simple").tag(true)
-            Text("Detailed").tag(false)
+        .refreshable { await refresh?() }
+        .overlay {
+            if showTodayOverlay {
+                TodayOverlay(hourly: consensus.hourlyForecast, isPresented: $showTodayOverlay)
+            }
         }
-        .pickerStyle(.segmented)
+        .sheet(isPresented: $showWeekSheet) {
+            NavigationStack {
+                ZStack {
+                    Sky.navy.ignoresSafeArea()
+                    WeekView(daily: consensus.dailyForecast,
+                             disagreementCount: consensus.dailyForecast.filter(\.hasDisagreement).count)
+                }
+                .navigationTitle("7 days").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showWeekSheet = false }.foregroundColor(Sky.tide)
+                    }
+                }
+                .toolbarBackground(Sky.ink, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+            }
+            .preferredColorScheme(.dark)
+        }
     }
 
     @ViewBuilder
@@ -221,9 +236,10 @@ struct HomeView: View {
                 .font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
 
             VStack(spacing: 0) {
-                standardRow(.today, "thermometer.medium", "Today",
-                            value: today.map { "\(Units.tempString($0.tempMax)) / \(Units.tempString($0.tempMin))" },
-                            detail: today?.condition.rawValue.lowercased())
+                actionRow("thermometer.medium", "Today",
+                          value: today.map { "\(Units.tempString($0.tempMax)) / \(Units.tempString($0.tempMin))" },
+                          detail: today?.condition.rawValue.lowercased(),
+                          hint: "Opens today's hourly detail") { showTodayOverlay = true }
                 divider
                 weekRow(days)                       // the five-day icon strip
                 divider
@@ -279,10 +295,34 @@ struct HomeView: View {
         .accessibilityLabel("\(title), \(value ?? "unavailable"). Opens \(tab.label).")
     }
 
+    /// Same row, but runs an action (e.g. presents an overlay) rather than opening a tab.
+    private func actionRow(_ icon: String, _ title: String, value: String?, detail: String?,
+                           hint: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Image(systemName: icon).font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Sky.muted).frame(width: 18)
+                Text(title).font(.system(size: 13)).foregroundColor(Sky.text)
+                Spacer(minLength: 8)
+                if let detail {
+                    Text(detail).font(.system(size: 10)).foregroundColor(Sky.muted)
+                        .lineLimit(1).layoutPriority(-1)
+                }
+                Text(value ?? "—").font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(value == nil ? Sky.muted : Sky.white).lineLimit(1)
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(Sky.muted.opacity(0.6))
+            }
+            .padding(.vertical, 10).padding(.horizontal, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(value ?? "unavailable"). \(hint).")
+    }
+
     /// The week at a glance: the next five days as icon cells, each with its day,
     /// weather glyph and high/low, opening the Week tab.
     private func weekRow(_ days: [ConsensusDaily]) -> some View {
-        Button { onOpenTab?(.week) } label: {
+        Button { showWeekSheet = true } label: {
             HStack(spacing: 11) {
                 Image(systemName: "calendar").font(.system(size: 13, weight: .medium))
                     .foregroundColor(Sky.muted).frame(width: 18)
@@ -508,7 +548,7 @@ struct SignalsStrip: View {
         // Serious weather news.
         if let n = news {
             out.append(Chip(emoji: "📰", text: short(n.headline, 24),
-                            color: n.impact == .high ? Sky.red : Sky.amber, tab: .news))
+                            color: n.impact == .high ? Sky.red : Sky.amber, tab: .sky))
         }
 
         return out
@@ -516,5 +556,100 @@ struct SignalsStrip: View {
 
     private func short(_ s: String, _ n: Int) -> String {
         s.count <= n ? s : String(s.prefix(n - 1)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+}
+
+// MARK: - Today overlay
+
+/// Tapping the temperature opens today hour-by-hour without leaving the screen —
+/// a semi-transparent sheet with a VERTICAL timeline: time runs down, each hour's
+/// temperature is a comfort-lit dot tracing across the day's low→high range, so the
+/// shape of the day reads as a single glance down the column.
+struct TodayOverlay: View {
+    let hourly: [ConsensusHourly]
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        let hours = Array(hourly.prefix(24))
+        let lo = hours.map(\.temperature).min() ?? 0
+        let hi = hours.map(\.temperature).max() ?? 1
+
+        ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+                .onTapGesture { dismiss() }
+
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("TODAY").font(.system(size: 11, weight: .bold)).kerning(1.6).foregroundColor(Sky.muted)
+                        Text("Hour by hour").font(.system(size: 19, weight: .semibold)).foregroundColor(Sky.white)
+                    }
+                    Spacer()
+                    Text("\(Units.tempString(lo)) – \(Units.tempString(hi))")
+                        .font(.system(size: 13, weight: .medium)).foregroundColor(Sky.muted)
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 26))
+                            .foregroundColor(Sky.muted).padding(.leading, 8)
+                    }
+                    .accessibilityLabel("Close")
+                }
+                .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 10)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(hours.enumerated()), id: \.element.id) { i, h in
+                            row(h, lo: lo, hi: hi, isFirst: i == 0)
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.bottom, 22)
+                }
+            }
+            .background(Sky.navy.opacity(0.82))
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 26))
+            .overlay(RoundedRectangle(cornerRadius: 26).stroke(Sky.surface.opacity(0.5), lineWidth: 1))
+            .padding(.horizontal, 12).padding(.vertical, 44)
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        }
+    }
+
+    private func dismiss() { withAnimation(.easeOut(duration: 0.2)) { isPresented = false } }
+
+    private func row(_ h: ConsensusHourly, lo: Double, hi: Double, isFirst: Bool) -> some View {
+        let span = max(hi - lo, 1)
+        let t = CGFloat((h.temperature - lo) / span)
+        let c = Comfort.comfortColor(ComfortMetric.temp.score(h.temperature))
+        return HStack(spacing: 10) {
+            Text(isFirst ? "Now" : h.hourLabel)
+                .font(.system(size: 12, weight: isFirst ? .bold : .regular))
+                .foregroundColor(isFirst ? Sky.white : Sky.muted)
+                .frame(width: 42, alignment: .leading)
+            Image(systemName: h.condition.icon).font(.system(size: 13))
+                .foregroundColor(Sky.text).frame(width: 20)
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Sky.surface.opacity(0.6)).frame(height: 3)
+                    Circle().fill(c).frame(width: 11, height: 11)
+                        .shadow(color: c.opacity(0.6), radius: 4)
+                        .offset(x: max(0, min(w - 11, t * w - 5.5)))
+                }
+                .frame(maxHeight: .infinity, alignment: .center)
+            }
+            .frame(height: 26)
+            if h.rainProbability >= 30 {
+                HStack(spacing: 2) {
+                    Image(systemName: "drop.fill").font(.system(size: 8))
+                    Text("\(Int(h.rainProbability.rounded()))%").font(.system(size: 10))
+                }
+                .foregroundColor(Sky.rain).frame(width: 38, alignment: .trailing)
+            } else {
+                Color.clear.frame(width: 38, height: 1)
+            }
+            Text(Units.tempString(h.temperature))
+                .font(.system(size: 15, weight: .semibold)).foregroundColor(Sky.white)
+                .frame(width: 46, alignment: .trailing)
+        }
+        .padding(.vertical, 6.5)
     }
 }

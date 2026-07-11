@@ -21,6 +21,7 @@ struct SimpleNowView: View {
     let confidence: Double
     let placeName: String?
     var onOpenDetail: (() -> Void)? = nil
+    var onTapTemperature: (() -> Void)? = nil
 
     private var comfort: ComfortData { ComfortData(consensus: consensus) }
 
@@ -74,6 +75,10 @@ struct SimpleNowView: View {
             Text(Units.tempString(consensus.temperature))
                 .font(.system(size: 78, weight: .thin, design: .rounded))
                 .foregroundColor(Sky.white)
+                .contentShape(Rectangle())
+                .onTapGesture { onTapTemperature?() }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("Opens today's hourly detail")
             Text("feels like \(Units.tempString(consensus.feelsLike)) · \(consensus.condition.rawValue.lowercased())")
                 .font(.system(size: 13)).foregroundColor(Sky.muted)
         }

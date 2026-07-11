@@ -268,29 +268,49 @@ struct UVView: View {
 // ────────────────────────────────────────────────────────────────────────────
 // MARK: - Sky (astronomical events)
 // ────────────────────────────────────────────────────────────────────────────
+/// Sky & News — one tab. Weather and space are the same story told two ways: what
+/// the sky is doing to us (warnings, storms), and what it's doing above us (events
+/// overhead). The time-sensitive news leads; the events-ahead almanac follows.
 struct SkyView: View {
     let location: CLLocation
+    var region: String? = nil
+    var countryCode: String? = nil
     @State private var events: [AstroEvent] = []
+    @State private var news: [WeatherNewsItem] = []
     @State private var loaded = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 8) {
-                tabHeader("🔭 ASTRONOMICAL EVENTS")
+                SpaceTickerStrip()
+
+                tabHeader("📰 SPACE & WEATHER NEWS")
+                if news.isEmpty && loaded {
+                    Text("No current warnings or weather news for your area.")
+                        .font(.system(size: 12)).foregroundColor(Sky.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
+                }
+                ForEach(news) { NewsCard(item: $0) }
+
+                tabHeader("🔭 SKY EVENTS AHEAD").padding(.top, 10)
                 if events.isEmpty && loaded {
                     Text("No notable events in the months ahead.")
-                        .font(.system(size: 12)).foregroundColor(Sky.muted).padding(.top, 20)
+                        .font(.system(size: 12)).foregroundColor(Sky.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
                 }
                 ForEach(events) { AstroCard(event: $0) }
             }
             .padding(16)
         }
-        .task {
-            events = await AstroService().upcomingEvents(near: location)
+        .task(id: location.coordinate.latitude) {
+            async let ev = AstroService().upcomingEvents(near: location)
+            async let nw = WeatherNewsService().fetchLocalNews(
+                location: location, region: region, countryCode: countryCode)
+            events = await ev
+            news = await nw
             loaded = true
             // Schedule reminders for rare/notable events (3 days & 1 day before).
-            // Provisional authorization delivers quietly with no intrusive prompt;
-            // the user can promote these to prominent alerts from Notification Center.
+            // Provisional authorization delivers quietly with no intrusive prompt.
             let center = UNUserNotificationCenter.current()
             _ = try? await center.requestAuthorization(options: [.alert, .sound, .provisional])
             AstroNotificationScheduler().schedule(events: events)
@@ -333,6 +353,13 @@ private struct AstroCard: View {
         .overlay(alignment: .leading) { Rectangle().fill(accent).frame(width: 3) }
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// MARK: - Space stock ticker (filled in once the quote endpoint is wired)
+// ────────────────────────────────────────────────────────────────────────────
+struct SpaceTickerStrip: View {
+    var body: some View { EmptyView() }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
