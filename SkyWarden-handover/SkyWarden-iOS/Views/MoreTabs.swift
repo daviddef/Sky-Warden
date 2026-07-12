@@ -277,12 +277,13 @@ struct SkyView: View {
     var countryCode: String? = nil
     @State private var events: [AstroEvent] = []
     @State private var news: [WeatherNewsItem] = []
+    @State private var quotes: [StockQuote] = []
     @State private var loaded = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 8) {
-                SpaceTickerStrip()
+                SpaceTickerStrip(quotes: quotes)
 
                 tabHeader("📰 SPACE & WEATHER NEWS")
                 if news.isEmpty && loaded {
@@ -306,8 +307,10 @@ struct SkyView: View {
             async let ev = AstroService().upcomingEvents(near: location)
             async let nw = WeatherNewsService().fetchLocalNews(
                 location: location, region: region, countryCode: countryCode)
+            async let qs = StockService().fetch()
             events = await ev
             news = await nw
+            quotes = await qs
             loaded = true
             // Schedule reminders for rare/notable events (3 days & 1 day before).
             // Provisional authorization delivers quietly with no intrusive prompt.
@@ -359,11 +362,9 @@ private struct AstroCard: View {
 // MARK: - Space stock ticker
 // ────────────────────────────────────────────────────────────────────────────
 struct SpaceTickerStrip: View {
-    @State private var quotes: [StockQuote] = []
+    let quotes: [StockQuote]
 
     var body: some View {
-        // A concrete container (not a Group) so `.task` fires even before any
-        // quotes arrive — a Group that resolves to EmptyView never runs it.
         VStack(alignment: .leading, spacing: 6) {
             if !quotes.isEmpty {
                 Text("🚀 SPACE MARKETS · DELAYED")
@@ -393,7 +394,6 @@ struct SpaceTickerStrip: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task { quotes = await StockService().fetch() }
     }
 }
 

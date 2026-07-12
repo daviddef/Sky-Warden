@@ -28,6 +28,7 @@ struct HomeView: View {
     @State private var showFeedback = false
     @State private var userReport: UserReport?
     @State private var nowcast: PrecipNowcast?
+    @State private var airQuality: AirQuality?
     @StateObject private var signals = HomeSignals()
     @AppStorage("display.nowSimple") private var simpleMode = true
     @AppStorage(DisplayKey.dialStyle) private var dialStyleRaw = DialStyle.arc.rawValue
@@ -152,6 +153,9 @@ struct HomeView: View {
                     PrecipNotifier.shared.consider(n, place: placeName ?? "your area")
                 }
             }
+            .task(id: location.coordinate.latitude) {
+                airQuality = await AirQualityService().fetch(location: location)
+            }
         }
         .refreshable { await refresh?() }
         .overlay {
@@ -216,6 +220,9 @@ struct HomeView: View {
 
                 MostAccurateCard(location: location, sources: consensus.sources,
                                  onOpen: { onOpenTab?(.sources) })
+                    .padding(.horizontal, 16).padding(.top, 12)
+
+                AirQualityCard(air: airQuality)
                     .padding(.horizontal, 16).padding(.top, 12)
 
                 tabSummary.padding(.horizontal, 16).padding(.top, 12)
@@ -1027,5 +1034,62 @@ final class PrecipNotifier {
                                             content: content, trigger: trigger)
             try? await center.add(req)
         }
+    }
+}
+
+// MARK: - Air quality card
+
+/// AQI + particulates (global) and pollen (where CAMS covers it). Baseline info
+/// users now expect; kept quiet — one glanceable number, coloured by severity.
+struct AirQualityCard: View {
+    let air: AirQuality?
+
+    var body: some View {
+        Group {
+            if let a = air {
+                let c = Color(hex: a.colorHex)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("🌫 AIR QUALITY").font(.system(size: 10)).foregroundColor(Sky.muted).kerning(0.7)
+                        Spacer()
+                        Text(a.category).font(.system(size: 10, weight: .semibold)).foregroundColor(c)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("\(Int(a.usAqi.rounded()))")
+                            .font(.system(size: 30, weight: .bold, design: .rounded)).foregroundColor(Sky.white)
+                        Text("US AQI").font(.system(size: 11)).foregroundColor(Sky.muted)
+                        Spacer()
+                        if let pm = a.pm25 { pill("PM2.5", String(format: "%.0f", pm)) }
+                        if let o = a.ozone { pill("O₃", String(format: "%.0f", o)) }
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(LinearGradient(colors: [Sky.green, Sky.amber, Color(hex: "E05555")],
+                                                     startPoint: .leading, endPoint: .trailing))
+                                .frame(height: 6).opacity(0.35)
+                            Circle().fill(c).frame(width: 12, height: 12)
+                                .shadow(color: c.opacity(0.6), radius: 4)
+                                .offset(x: max(0, min(geo.size.width - 12, geo.size.width * a.dialFraction - 6)))
+                        }.frame(maxHeight: .infinity, alignment: .center)
+                    }.frame(height: 14)
+                    if let p = a.topPollen {
+                        Text("🌾 \(p.name.capitalized) pollen \(p.level)")
+                            .font(.system(size: 11)).foregroundColor(Sky.text)
+                    }
+                }
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Sky.card).clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+        }
+    }
+
+    private func pill(_ label: String, _ val: String) -> some View {
+        VStack(spacing: 1) {
+            Text(val).font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundColor(Sky.white)
+            Text(label).font(.system(size: 8)).foregroundColor(Sky.muted)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Sky.surface).clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

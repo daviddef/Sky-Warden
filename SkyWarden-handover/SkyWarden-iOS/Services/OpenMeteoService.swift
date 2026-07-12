@@ -295,3 +295,84 @@ struct NowcastService {
         let minutely_15: M15
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// MARK: - Air quality + pollen
+// ────────────────────────────────────────────────────────────────────────────
+// Now baseline, not premium — Apple ships it, so users expect it. Open-Meteo's
+// air-quality API is keyless and global for AQI/particulates; pollen is CAMS
+// Europe only, so it appears where it exists and is silent elsewhere. Different
+// host from the forecast proxy, so this calls direct with a 30-min client cache.
+
+struct AirQuality: Codable, Equatable {
+    let usAqi: Double
+    let pm25: Double?
+    let pm10: Double?
+    let ozone: Double?
+    let no2: Double?
+    let pollen: [String: Double]     // e.g. "grass_pollen" → grains/m³ (Europe)
+
+    var category: String {
+        switch usAqi {
+        case ..<51:  return "Good"
+        case ..<101: return "Moderate"
+        case ..<151: return "Unhealthy for sensitive"
+        case ..<201: return "Unhealthy"
+        case ..<301: return "Very unhealthy"
+        default:     return "Hazardous"
+        }
+    }
+    var colorHex: String {
+        switch usAqi {
+        case ..<51:  return "3DD68C"   // green
+        case ..<101: return "F5A623"   // amber
+        case ..<151: return "FF8C42"   // orange
+        case ..<201: return "E05555"   // red
+        case ..<301: return "A78BFA"   // purple
+        default:     return "8B5A6B"   // maroon
+        }
+    }
+    /// Fraction along a 0–200 dial, clamped — the healthy half is the first quarter.
+    var dialFraction: Double { min(1, max(0, usAqi / 200)) }
+
+    /// The most-elevated pollen, if any is worth mentioning (Europe only).
+    var topPollen: (name: String, level: String)? {
+        guard let hit = pollen.filter({ $0.value >= 20 }).max(by: { $0.value < $1.value }) else { return nil }
+        let level = hit.value >= 150 ? "very high" : hit.value >= 50 ? "high" : "moderate"
+        return (hit.key.replacingOccurrences(of: "_pollen", with: ""), level)
+    }
+}
+
+struct AirQualityService {
+    private let base = "https://air-quality-api.open-meteo.com/v1/air-quality"
+
+    func fetch(location: CLLocation) async -> AirQuality? {
+        let key = DiskCache.gridKey("aqi", location, precision: 0.1)
+        if let hit = DiskCache.load(AirQuality.self, key: key, ttl: 1800) { return hit }
+
+        guard var comps = URLComponents(string: base) else { return nil }
+        comps.queryItems = [
+            .init(name: "latitude",  value: String(location.coordinate.latitude)),
+            .init(name: "longitude", value: String(location.coordinate.longitude)),
+            .init(name: "current",   value: "us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide,grass_pollen,birch_pollen,ragweed_pollen"),
+            .init(name: "timezone",  value: "GMT"),
+        ]
+        guard let url = comps.url else { return nil }
+        var req = URLRequest(url: url); req.timeoutInterval = 10
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let c = root["current"] as? [String: Any],
+              let aqi = (c["us_aqi"] as? NSNumber)?.doubleValue
+        else { return nil }
+
+        func d(_ k: String) -> Double? { (c[k] as? NSNumber)?.doubleValue }
+        var pollen: [String: Double] = [:]
+        for p in ["grass_pollen", "birch_pollen", "ragweed_pollen"] { if let v = d(p) { pollen[p] = v } }
+
+        let aq = AirQuality(usAqi: aqi, pm25: d("pm2_5"), pm10: d("pm10"),
+                            ozone: d("ozone"), no2: d("nitrogen_dioxide"), pollen: pollen)
+        DiskCache.save(aq, key: key)
+        return aq
+    }
+}
