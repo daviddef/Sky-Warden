@@ -305,11 +305,13 @@ struct SkyView: View {
         }
         .task(id: location.coordinate.latitude) {
             async let ev = AstroService().upcomingEvents(near: location)
-            async let nw = WeatherNewsService().fetchLocalNews(
+            async let weather = WeatherNewsService().fetchLocalNews(
                 location: location, region: region, countryCode: countryCode)
+            async let space = SpaceNewsService().fetch()
             async let qs = StockService().fetch()
             events = await ev
-            news = await nw
+            // Weather stories lead (they're actionable); space news fills the feed.
+            news = await weather + (await space)
             quotes = await qs
             loaded = true
             // Schedule reminders for rare/notable events (3 days & 1 day before).
