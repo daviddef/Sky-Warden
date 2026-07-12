@@ -483,6 +483,11 @@ struct StockService {
 
 struct SpaceNewsService {
     func fetch(limit: Int = 6) async -> [WeatherNewsItem] {
+        // Space news is the same for everyone, so cache it globally for 30 min —
+        // one fetch per half hour per device, not one per Sky-tab open.
+        let cacheKey = "spacenews:v1"
+        if let hit = DiskCache.load([WeatherNewsItem].self, key: cacheKey, ttl: CacheTTL.news) { return hit }
+
         guard let url = URL(string: "https://api.spaceflightnewsapi.net/v4/articles/?limit=\(limit)") else { return [] }
         var req = URLRequest(url: url); req.timeoutInterval = 10
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
@@ -492,12 +497,14 @@ struct SpaceNewsService {
 
         let iso = ISO8601DateFormatter()
         let isoFrac = ISO8601DateFormatter(); isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return decoded.results.compactMap { a in
+        let items = decoded.results.compactMap { a -> WeatherNewsItem? in
             guard let u = URL(string: a.url) else { return nil }
             let date = iso.date(from: a.published_at) ?? isoFrac.date(from: a.published_at) ?? Date()
             return WeatherNewsItem(id: a.url, headline: a.title, excerpt: a.summary,
                                    source: a.news_site, url: u, publishedAt: date, impact: .low)
         }
+        if !items.isEmpty { DiskCache.save(items, key: cacheKey) }
+        return items
     }
 
     private struct Response: Decodable {
