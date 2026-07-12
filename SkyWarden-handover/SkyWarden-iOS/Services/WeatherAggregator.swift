@@ -161,11 +161,15 @@ final class WeatherAggregator: ObservableObject {
     }
 
     // MARK: - Tides fetch
-    /// Called on every refresh — including forced ones and background wakes —
-    /// but WorldTidesService caches on disk for 6 h, so this is nearly always
-    /// free. `force` deliberately does not reach the tide cache: forcing a
-    /// weather refresh should not spend a paid tide credit.
+    /// Tides come from Open-Meteo's Marine API first — free, keyless, worldwide,
+    /// and cached 6 h — so the "no tide data" state is gone even without WorldTides
+    /// credits. WorldTides is kept as a fallback for when its key + credits exist
+    /// (it resolves to a named tide station, which is nice to show).
     private func fetchTides(location: CLLocation) async -> TideDay? {
+        // Open-Meteo Marine first (free, keyless, self-timeout inside the service).
+        if let tide = await OpenMeteoTideService().fetch(location: location) {
+            return tide
+        }
         do {
             return try await Self.withTimeout(sourceTimeout) { try await self.worldTides.fetch(location: location) }
         } catch {

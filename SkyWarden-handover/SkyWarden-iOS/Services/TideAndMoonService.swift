@@ -189,3 +189,77 @@ struct MoonService {
 // MARK: - Sun Service (using Open-Meteo's daily sunrise/sunset)
 // Sunrise/sunset come free from Open-Meteo's daily response — no separate service needed.
 // The OpenMeteoService already extracts these into DailyReading.sunrise / .sunset.
+
+// MARK: - Open-Meteo Marine tides (free, keyless)
+//
+// WorldTides bills per call and ran out of credits. Open-Meteo's Marine API gives
+// `sea_level_height_msl` — the tidal sea level relative to mean sea level — free,
+// keyless, and worldwide. We read the hourly curve and find the highs and lows
+// ourselves (parabolic interpolation puts the turning points to sub-hour
+// accuracy), producing the same TideDay the rest of the app already consumes.
+
+struct OpenMeteoTideService {
+    private let base = "https://marine-api.open-meteo.com/v1/marine"
+
+    func fetch(location: CLLocation, days: Int = 2) async -> TideDay? {
+        let key = DiskCache.gridKey("tides-om", location)
+        if let hit = DiskCache.load(TideDay.self, key: key, ttl: CacheTTL.tides) { return hit }
+
+        guard var comps = URLComponents(string: base) else { return nil }
+        comps.queryItems = [
+            .init(name: "latitude",      value: String(location.coordinate.latitude)),
+            .init(name: "longitude",     value: String(location.coordinate.longitude)),
+            .init(name: "hourly",        value: "sea_level_height_msl"),
+            .init(name: "timeformat",    value: "unixtime"),
+            .init(name: "timezone",      value: "GMT"),
+            .init(name: "forecast_days", value: String(days)),
+        ]
+        guard let url = comps.url else { return nil }
+        var req = URLRequest(url: url); req.timeoutInterval = 10
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let decoded = try? JSONDecoder().decode(MarineResponse.self, from: data)
+        else { return nil }
+
+        let points: [TideCurvePoint] = zip(decoded.hourly.time, decoded.hourly.sea_level_height_msl)
+            .compactMap { t, h in
+                guard let h else { return nil }
+                return TideCurvePoint(time: Date(timeIntervalSince1970: TimeInterval(t)), height: h)
+            }
+        // A grid cell with no ocean nearby returns all-nil — that's genuinely "no
+        // tide here", so bail rather than invent a flat line.
+        guard points.count > 3 else { return nil }
+
+        let station = TideStation(id: "open-meteo", name: "Open-Meteo marine model",
+                                  latitude: location.coordinate.latitude,
+                                  longitude: location.coordinate.longitude, distanceKm: 0)
+        let day = TideDay(date: Date(), events: extremes(points), curvePoints: points, station: station)
+        DiskCache.save(day, key: key)
+        return day
+    }
+
+    /// Highs and lows are the turning points of the curve; parabolic interpolation
+    /// on the three samples around each one recovers the time and height between
+    /// the hourly grid (a tide peak rarely lands on the hour).
+    private func extremes(_ p: [TideCurvePoint]) -> [TideEvent] {
+        var out: [TideEvent] = []
+        for i in 1..<(p.count - 1) {
+            let a = p[i - 1].height, b = p[i].height, c = p[i + 1].height
+            let isHigh = b > a && b >= c
+            let isLow  = b < a && b <= c
+            guard isHigh || isLow else { continue }
+            let denom = a - 2 * b + c
+            let offset = denom != 0 ? max(-0.5, min(0.5, 0.5 * (a - c) / denom)) : 0
+            let interval = p[i + 1].time.timeIntervalSince(p[i].time)
+            out.append(TideEvent(time: p[i].time.addingTimeInterval(offset * interval),
+                                 height: b - 0.25 * (a - c) * offset,
+                                 type: isHigh ? .high : .low))
+        }
+        return out
+    }
+
+    private struct MarineResponse: Decodable {
+        struct Hourly: Decodable { let time: [Int]; let sea_level_height_msl: [Double?] }
+        let hourly: Hourly
+    }
+}
