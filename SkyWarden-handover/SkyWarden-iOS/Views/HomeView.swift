@@ -335,21 +335,19 @@ struct HomeView: View {
                             value: nextTide.map(\.heightDisplay),
                             detail: nextTide.map { "\($0.type.rawValue.lowercased()) at \($0.timeDisplay)" })
                 divider
-                standardRow(.uv, "sun.max", "UV index",
-                            value: consensus.uvIndex.isFinite ? "\(Int(consensus.uvIndex.rounded()))" : nil,
-                            detail: ComfortMetric.uv.comfortLabel(consensus.uvIndex).lowercased())
+                uvRow(consensus.uvIndex)
                 divider
                 if let a = airQuality {
                     aqiRow(a)
                     divider
                 }
-                standardRow(.sky, "moon.stars", "Moon",
-                            value: moonData.map { "\(Int(($0.illumination * 100).rounded()))%" },
-                            detail: moonData?.phase.rawValue.lowercased())
+                if let m = moonData {
+                    moonRow(m)
+                } else {
+                    standardRow(.sky, "moon.stars", "Moon", value: nil, detail: nil)
+                }
                 divider
-                standardRow(.sources, "antenna.radiowaves.left.and.right", "Sources agreeing",
-                            value: "\(consensus.sources.count)/\(consensus.sources.count + failedSources.count)",
-                            detail: flagCount == 0 ? "no disagreements" : "\(flagCount) metric\(flagCount == 1 ? "" : "s") vary")
+                sourcesRow
                 divider
                 onThisDayRow                        // compact history, no tab
             }
@@ -428,6 +426,101 @@ struct HomeView: View {
         }
         .padding(.vertical, 10).padding(.horizontal, 12)
         .accessibilityElement(children: .combine)
+    }
+
+    private var rowChevron: some View {
+        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+            .foregroundColor(Sky.muted.opacity(0.6))
+    }
+
+    /// UV as a colour scale: the WHO index ramp (green→yellow→orange→red→purple)
+    /// with a marker where today sits, and the number in that band's colour.
+    private func uvRow(_ uv: Double) -> some View {
+        Button { onOpenTab?(.uv) } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "sun.max").font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Sky.muted).frame(width: 18)
+                Text("UV index").font(.system(size: 13)).foregroundColor(Sky.text)
+                Spacer(minLength: 8)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(LinearGradient(
+                        colors: [Color(hex: "3DD68C"), Color(hex: "F5D23D"), Color(hex: "F5A623"),
+                                 Color(hex: "E05555"), Color(hex: "A78BFA")],
+                        startPoint: .leading, endPoint: .trailing)).frame(width: 44, height: 4)
+                    Circle().fill(.white).frame(width: 7, height: 7)
+                        .overlay(Circle().stroke(Sky.navy, lineWidth: 1))
+                        .offset(x: min(37, max(0, 44 * min(1, uv / 11) - 3.5)))
+                }
+                Text(uv.isFinite ? "\(Int(uv.rounded()))" : "—")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(uvColor(uv)).frame(minWidth: 18, alignment: .trailing)
+                rowChevron
+            }
+            .padding(.vertical, 10).padding(.horizontal, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("UV index \(Int(uv.rounded())), \(ComfortMetric.uv.comfortLabel(uv)). Opens UV.")
+    }
+
+    private func uvColor(_ uv: Double) -> Color {
+        switch uv {
+        case ..<3:  Color(hex: "3DD68C")
+        case ..<6:  Color(hex: "F5D23D")
+        case ..<8:  Color(hex: "F5A623")
+        case ..<11: Color(hex: "E05555")
+        default:    Color(hex: "A78BFA")
+        }
+    }
+
+    /// Moon as a fill: a ring that runs empty at new moon to full at full moon,
+    /// with the illumination percentage beside it.
+    private func moonRow(_ m: MoonData) -> some View {
+        Button { onOpenTab?(.sky) } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "moon.stars").font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Sky.muted).frame(width: 18)
+                Text("Moon").font(.system(size: 13)).foregroundColor(Sky.text)
+                Spacer(minLength: 8)
+                Text(m.phase.rawValue.lowercased()).font(.system(size: 10)).foregroundColor(Sky.muted)
+                    .lineLimit(1).layoutPriority(-1)
+                ZStack {
+                    Circle().stroke(Sky.surface, lineWidth: 3).frame(width: 15, height: 15)
+                    Circle().trim(from: 0, to: m.illumination)
+                        .stroke(Sky.text, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .frame(width: 15, height: 15).rotationEffect(.degrees(-90))
+                }
+                Text("\(m.illuminationPercent)%").font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(Sky.white).frame(minWidth: 34, alignment: .trailing)
+                rowChevron
+            }
+            .padding(.vertical, 10).padding(.horizontal, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Moon, \(m.phase.rawValue), \(m.illuminationPercent) percent lit. Opens Sky.")
+    }
+
+    /// Sources agreeing, tinted by agreement — green when they line up, amber when
+    /// they don't, matching the confidence language everywhere else.
+    private var sourcesRow: some View {
+        let agree = flagCount == 0
+        return Button { onOpenTab?(.sources) } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "antenna.radiowaves.left.and.right").font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Sky.muted).frame(width: 18)
+                Text("Sources agreeing").font(.system(size: 13)).foregroundColor(Sky.text)
+                Spacer(minLength: 8)
+                Text(agree ? "no disagreements" : "\(flagCount) metric\(flagCount == 1 ? "" : "s") vary")
+                    .font(.system(size: 10)).foregroundColor(Sky.muted).lineLimit(1).layoutPriority(-1)
+                Circle().fill(agree ? Comfort.good : Sky.amber).frame(width: 7, height: 7)
+                Text("\(consensus.sources.count)/\(consensus.sources.count + failedSources.count)")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(agree ? Comfort.good : Sky.amber).frame(minWidth: 30, alignment: .trailing)
+                rowChevron
+            }
+            .padding(.vertical, 10).padding(.horizontal, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Sources agreeing, \(consensus.sources.count) of \(consensus.sources.count + failedSources.count). Opens Sources.")
     }
 
     /// The week at a glance: the next five days as icon cells, each with its day,
