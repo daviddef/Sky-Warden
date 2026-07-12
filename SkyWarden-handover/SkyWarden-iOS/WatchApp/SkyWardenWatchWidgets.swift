@@ -52,7 +52,8 @@ struct SkyWardenTimelineProvider: TimelineProvider {
         return SkyWardenEntry(
             date: s.fetchedAt, temperature: s.temperature, condition: s.conditionSFSymbol,
             conditionEmoji: s.conditionEmoji, rainPercent: s.rainPercent,
-            confidencePercent: s.confidencePercent, hasDisagreement: s.hasDisagreement,
+            confidencePercent: s.confidencePercent, comfortPercent: s.comfortPercent,
+            hasDisagreement: s.hasDisagreement,
             nextTide: s.nextTide, moonEmoji: s.moonEmoji, moonPhase: s.moonPhase)
     }
 }
@@ -96,18 +97,28 @@ struct SkyWardenComplicationEntryView: View {
     private static func tint(_ e: SkyWardenEntry) -> Color { e.hasDisagreement ? .orange : .green }
 }
 
-// MARK: - Circular: temp inside a confidence gauge
+// MARK: - Circular: temp + rain inside a COMFORT gauge
 
 private struct CircularView: View {
     let entry: SkyWardenEntry
     var body: some View {
-        Gauge(value: Double(entry.confidencePercent), in: 0...100) {
-            Text("\(entry.temperature)°")
+        // The ring is the overall comfort aggregate — how nice it is out — and its
+        // red→amber→green fill colour reflects that too. The centre carries the
+        // temperature with the rain chance under it.
+        Gauge(value: Double(entry.comfortPercent), in: 0...100) {
+            EmptyView()
         } currentValueLabel: {
-            Text("\(entry.temperature)°").font(.system(size: 20, weight: .medium, design: .rounded))
+            VStack(spacing: -1) {
+                Text("\(entry.temperature)°").font(.system(size: 16, weight: .semibold, design: .rounded))
+                HStack(spacing: 1) {
+                    Image(systemName: "drop.fill").font(.system(size: 6))
+                    Text("\(entry.rainPercent)%").font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+            }
         }
         .gaugeStyle(.accessoryCircular)
-        .tint(entry.hasDisagreement ? .orange : .green)
+        .tint(Gradient(colors: [.red, .yellow, .green]))
         .widgetAccentable()
     }
 }

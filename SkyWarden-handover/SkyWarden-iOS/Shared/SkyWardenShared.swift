@@ -27,6 +27,8 @@ struct StoredWeatherData: Codable {
     let conditionEmoji:    String
     let rainPercent:       Int
     let confidencePercent: Int
+    /// Overall comfort as a 0–100 fill (0 = poor, 100 = great), for the watch ring.
+    var comfortPercent:    Int = 50
     let hasDisagreement:   Bool
     let nextTide:          String?
     let moonEmoji:         String

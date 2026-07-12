@@ -195,6 +195,8 @@ final class WeatherAggregator: ObservableObject {
             conditionEmoji:    consensus.condition.emoji,
             rainPercent:       Int(consensus.rainProbability.rounded()),
             confidencePercent: Int((consensus.confidence * 100).rounded()),
+            // Overall comfort score (−1…1) → 0…100 ring fill for the watch.
+            comfortPercent:    Int(((Comfort.overallScore(ComfortData(consensus: consensus)) + 1) / 2 * 100).rounded()),
             hasDisagreement:   consensus.hasDisagreements,
             nextTide:          nextTide,
             moonEmoji:         moonData?.phase.emoji ?? "🌙",

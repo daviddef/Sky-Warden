@@ -13,6 +13,7 @@ struct SkyWardenEntry: TimelineEntry {
     let conditionEmoji: String
     let rainPercent: Int
     let confidencePercent: Int
+    var comfortPercent: Int = 50   // 0…100 overall-comfort ring fill
     let hasDisagreement: Bool
     let nextTide: String?         // e.g. "High 1.8m @ 6:14"
     let moonEmoji: String
@@ -27,6 +28,7 @@ struct SkyWardenEntry: TimelineEntry {
             conditionEmoji:     "⛅",
             rainPercent:        15,
             confidencePercent:  72,
+            comfortPercent:     78,
             hasDisagreement:    true,
             nextTide:           "High 1.8m @ 6:14",
             moonEmoji:          "🌔",
@@ -136,6 +138,7 @@ class SkyWardenComplicationProvider: NSObject, CLKComplicationDataSource {
             conditionEmoji:     stored.conditionEmoji,
             rainPercent:        stored.rainPercent,
             confidencePercent:  stored.confidencePercent,
+            comfortPercent:     stored.comfortPercent,
             hasDisagreement:    stored.hasDisagreement,
             nextTide:           stored.nextTide,
             moonEmoji:          stored.moonEmoji,
