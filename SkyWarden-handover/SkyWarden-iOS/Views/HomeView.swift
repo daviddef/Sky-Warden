@@ -218,9 +218,6 @@ struct HomeView: View {
                                  onOpen: { onOpenTab?(.sources) })
                     .padding(.horizontal, 16).padding(.top, 12)
 
-                AirQualityCard(air: airQuality)
-                    .padding(.horizontal, 16).padding(.top, 12)
-
                 tabSummary.padding(.horizontal, 16).padding(.top, 12)
 
                 hourly.padding(.top, 12)
@@ -342,6 +339,10 @@ struct HomeView: View {
                             value: consensus.uvIndex.isFinite ? "\(Int(consensus.uvIndex.rounded()))" : nil,
                             detail: ComfortMetric.uv.comfortLabel(consensus.uvIndex).lowercased())
                 divider
+                if let a = airQuality {
+                    aqiRow(a)
+                    divider
+                }
                 standardRow(.sky, "moon.stars", "Moon",
                             value: moonData.map { "\(Int(($0.illumination * 100).rounded()))%" },
                             detail: moonData?.phase.rawValue.lowercased())
@@ -408,6 +409,25 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title), \(value ?? "unavailable"). \(hint).")
+    }
+
+    /// Air quality folded into one at-a-glance row: a severity-coloured dot and
+    /// number carry the meaning, so a full card isn't needed. Shows pollen instead
+    /// of the category where CAMS has it (Europe).
+    private func aqiRow(_ a: AirQuality) -> some View {
+        HStack(spacing: 11) {
+            Image(systemName: "aqi.medium").font(.system(size: 13, weight: .medium))
+                .foregroundColor(Sky.muted).frame(width: 18)
+            Text("Air quality").font(.system(size: 13)).foregroundColor(Sky.text)
+            Spacer(minLength: 8)
+            Text(a.topPollen.map { "\($0.name.capitalized) pollen \($0.level)" } ?? a.category.lowercased())
+                .font(.system(size: 10)).foregroundColor(Sky.muted).lineLimit(1).layoutPriority(-1)
+            Circle().fill(Color(hex: a.colorHex)).frame(width: 7, height: 7)
+            Text("\(Int(a.usAqi.rounded()))").font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundColor(Color(hex: a.colorHex))
+        }
+        .padding(.vertical, 10).padding(.horizontal, 12)
+        .accessibilityElement(children: .combine)
     }
 
     /// The week at a glance: the next five days as icon cells, each with its day,
