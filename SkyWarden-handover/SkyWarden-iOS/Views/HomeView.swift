@@ -56,26 +56,24 @@ struct HomeView: View {
     }
 
     /// The always-there way in to correcting the forecast — "it says raining, it's
-    /// dry". Once you've reported, it shows what you said and lets you update it.
-    @ViewBuilder private var reportBar: some View {
+    /// dry". Compact so it shares the signals row; turns into a tick once you've
+    /// reported. Its full accessibility label keeps the prompt for VoiceOver.
+    @ViewBuilder private var reportChip: some View {
+        let reported = userReport != nil
         Button { showFeedback = true } label: {
-            HStack(spacing: 7) {
-                Image(systemName: userReport == nil ? "hand.raised" : "checkmark.seal.fill")
-                    .font(.system(size: 12))
-                Text(userReport.map { "You reported \(reportSummary($0))" }
-                     ?? "Not matching outside? Tell us what it's really doing")
-                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).opacity(0.5)
+            HStack(spacing: 5) {
+                Image(systemName: reported ? "checkmark.seal.fill" : "hand.raised").font(.system(size: 12))
+                Text(reported ? "Reported" : "Report").font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(userReport == nil ? Sky.muted : Sky.tide)
-            .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(Sky.card.opacity(userReport == nil ? 0.55 : 1))
-            .overlay(Capsule().stroke((userReport == nil ? Sky.muted : Sky.tide).opacity(0.3), lineWidth: 1))
+            .foregroundColor(reported ? Sky.tide : Sky.muted)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Sky.card.opacity(reported ? 1 : 0.55))
+            .overlay(Capsule().stroke((reported ? Sky.tide : Sky.muted).opacity(0.35), lineWidth: 1))
             .clipShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 16)
+        .buttonStyle(.plain).fixedSize()
+        .accessibilityLabel(reported ? "You reported \(reportSummary(userReport!)). Edit."
+                                      : "Report the actual conditions")
     }
 
     /// The Dark Sky signature: a prominent heads-up when rain is about to start or
@@ -113,15 +111,13 @@ struct HomeView: View {
 
                 nowcastBanner
 
-                // Ambient signals both modes share: a calendar event the weather
-                // threatens, the next tide, the moon, a sky event coming up, a
-                // serious weather story. Each shows only when it has something to say.
+                // One compact row: the report action pinned on the left, the ambient
+                // signals (moon, tide, calendar, sky, news) scrolling beside it — so
+                // the weather itself isn't pushed down by two rows of chrome.
                 SignalsStrip(calendarEvents: signals.calendarEvents, tideDay: tideDay,
                              moonData: moonData, astro: signals.astro, news: signals.news,
-                             onOpenTab: onOpenTab)
+                             onOpenTab: onOpenTab, leading: AnyView(reportChip))
                     .padding(.top, 12)
-
-                reportBar.padding(.top, 10)
 
                 if simpleMode {
                     SimpleNowView(consensus: consensus, failedSources: failedSources,
@@ -578,6 +574,9 @@ struct SignalsStrip: View {
     let astro: AstroEvent?
     let news: WeatherNewsItem?
     let onOpenTab: ((ContentView.Tab) -> Void)?
+    /// A pinned chip (e.g. the report action) shown before the scrolling signals,
+    /// so two rows of chrome collapse into one.
+    var leading: AnyView? = nil
 
     private struct Chip: Identifiable {
         let id = UUID()
@@ -586,26 +585,30 @@ struct SignalsStrip: View {
 
     var body: some View {
         let chips = buildChips()
-        if !chips.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(chips) { c in
-                        Button { onOpenTab?(c.tab) } label: {
-                            HStack(spacing: 5) {
-                                Text(c.emoji).font(.system(size: 12))
-                                Text(c.text).font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(Sky.white).lineLimit(1)
+        if leading != nil || !chips.isEmpty {
+            HStack(spacing: 8) {
+                if let leading { leading }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(chips) { c in
+                            Button { onOpenTab?(c.tab) } label: {
+                                HStack(spacing: 5) {
+                                    Text(c.emoji).font(.system(size: 12))
+                                    Text(c.text).font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(Sky.white).lineLimit(1)
+                                }
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(c.color.opacity(0.16))
+                                .overlay(Capsule().stroke(c.color.opacity(0.45), lineWidth: 1))
+                                .clipShape(Capsule())
                             }
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(c.color.opacity(0.16))
-                            .overlay(Capsule().stroke(c.color.opacity(0.45), lineWidth: 1))
-                            .clipShape(Capsule())
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(.trailing, 16)
                 }
-                .padding(.horizontal, 16)
             }
+            .padding(.leading, 16)
         }
     }
 
