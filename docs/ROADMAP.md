@@ -38,7 +38,7 @@ Status: ✅ done · 🟡 partial · ⬜ not started.
 | 6 | **Widgets + Apple Watch complication w/ confidence dot** | STAKES | M | ⬜ watch scaffolding exists; complications + widgets to build |
 | 7 | **"Will it rain on my ___" activity planner** — decision framing | MOAT-adj | M | ⬜ (Plans tab is a stub to build on) |
 | 8 | **Progressive-disclosure spaghetti/plume view** for power users | MOAT | M | ⬜ premium candy |
-| 9 | **AQI + pollen as baseline (not premium)** | STAKES | S | ⬜ Open-Meteo air-quality API |
+| 9 | **AQI + pollen as baseline (not premium)** | STAKES | S | ✅ AirQualityCard on Detailed — US AQI + particulates global, CAMS pollen where it exists (947f64a) |
 | 10 | **Marine/tides + aviation METAR** as the paid vertical | MOAT-adj | L | 🟡 tides exist; marine/METAR depth to add |
 | 11 | **Restraint-first monetisation** — core free+ad-free; charge the enthusiast layer only | strategy | S | ⬜ |
 | 12 | **Privacy stance** — no location-data selling, stated | strategy | S | ⬜ |
