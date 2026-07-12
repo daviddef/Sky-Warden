@@ -214,10 +214,6 @@ struct HomeView: View {
 
                 pills.padding(.horizontal, 16).padding(.top, 10)
 
-                MostAccurateCard(location: location, sources: consensus.sources,
-                                 onOpen: { onOpenTab?(.sources) })
-                    .padding(.horizontal, 16).padding(.top, 12)
-
                 tabSummary.padding(.horizontal, 16).padding(.top, 12)
 
                 hourly.padding(.top, 12)
@@ -348,6 +344,8 @@ struct HomeView: View {
                 }
                 divider
                 sourcesRow
+                divider
+                accuracyRow
                 divider
                 onThisDayRow                        // compact history, no tab
             }
@@ -497,6 +495,41 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Moon, \(m.phase.rawValue), \(m.illuminationPercent) percent lit. Opens Sky.")
+    }
+
+    /// The accuracy ledger, folded into one line — which source has been sharpest
+    /// here, or the learning progress — tapping through to the full scoreboard. It
+    /// no longer needs a whole card on the home screen.
+    private var accuracyRow: some View {
+        let table = SkillLedger.shared.table(for: location)
+        let forecast = consensus.sources.filter { $0.kind == .forecast }
+        let weighted = table.weights(for: .temp, among: forecast) != nil
+        let best = forecast.filter { table.samples($0, .temp) >= SkillTable.minSamples }
+            .min { (table.mae($0, .temp) ?? .infinity) < (table.mae($1, .temp) ?? .infinity) }
+        let minChecks = forecast.map { table.samples($0, .temp) }.min() ?? 0
+        return Button { onOpenTab?(.sources) } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "scope").font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Sky.muted).frame(width: 18)
+                Text("Most accurate").font(.system(size: 13)).foregroundColor(Sky.text)
+                Spacer(minLength: 8)
+                if weighted, let b = best {
+                    Text("here lately").font(.system(size: 10)).foregroundColor(Sky.muted)
+                        .lineLimit(1).layoutPriority(-1)
+                    Text(b.short).font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(Comfort.good)
+                } else {
+                    Text("learning").font(.system(size: 10)).foregroundColor(Sky.muted)
+                    Text("\(minChecks)/\(SkillTable.minSamples)")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundColor(Sky.muted)
+                }
+                rowChevron
+            }
+            .padding(.vertical, 10).padding(.horizontal, 12).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(weighted ? "Most accurate source here lately, \(best?.rawValue ?? "unknown"). Opens Sources."
+                                     : "Learning the most accurate source, \(minChecks) of \(SkillTable.minSamples) checks. Opens Sources.")
     }
 
     /// Sources agreeing, tinted by agreement — green when they line up, amber when
