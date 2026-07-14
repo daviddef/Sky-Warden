@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Sky Warden</title>
+<meta name="description" content="Help and frequently asked questions for Sky Warden.">
+<style>
+  :root{--navy2:#132d4a;--tide:#4ecdc4;--white:#f0f8ff;--text:#c9e0f0;--muted:#7ba7c4;--line:rgba(123,167,196,.18)}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--text);line-height:1.62;
+    background:radial-gradient(1200px 700px at 70% -10%,#1a3a5c 0%,transparent 60%),linear-gradient(180deg,#0b1826,#0a1420);background-attachment:fixed;-webkit-font-smoothing:antialiased}
+  a{color:var(--tide);text-decoration:none}a:hover{text-decoration:underline}
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px}
+  header{padding:22px 0;display:flex;align-items:center;justify-content:space-between}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;color:var(--white);font-size:18px}
+  nav a{color:var(--muted);font-weight:600;font-size:14px;margin-left:18px}
+  h1{color:var(--white);font-size:34px;letter-spacing:-.02em;margin:28px 0 4px;font-weight:800}
+  .lead{font-size:17px;color:var(--text);margin-bottom:8px}
+  .contact{background:linear-gradient(180deg,#0e2f2b,#0f2740);border:1px solid rgba(78,205,196,.3);border-radius:16px;padding:18px 22px;margin:22px 0}
+  .contact a{font-weight:700}
+  details{background:linear-gradient(180deg,var(--navy2),#0f2740);border:1px solid var(--line);border-radius:14px;padding:2px 20px;margin:12px 0}
+  summary{cursor:pointer;color:var(--white);font-weight:700;font-size:16px;padding:16px 0;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";float:right;color:var(--muted);font-weight:700}
+  details[open] summary::after{content:"–"}
+  details p{margin:0 0 16px;font-size:15px}
+  h2{color:var(--white);font-size:20px;margin:34px 0 6px}
+  footer{border-top:1px solid var(--line);margin-top:44px;padding:26px 0 48px;color:var(--muted);font-size:13px}
+  footer a{color:var(--muted);margin-right:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span>⛅️</span> Sky Warden</div>
+    <nav><a href="index.html">Home</a><a href="privacy.html">Privacy</a></nav>
+  </header>
+
+  <h1>Support</h1>
+  <p class="lead">Happy to help. Most questions are answered below — if not, email us and we'll get back to you.</p>
+
+  <div class="contact">
+    📧 <strong>Contact:</strong> <a href="mailto:david.defranceski@gmail.com?subject=Sky%20Warden%20support">david.defranceski@gmail.com</a><br>
+    When reporting an issue, it helps to include your iOS version, device, and your location or the place you searched.
+  </div>
+
+  <h2>Frequently asked</h2>
+
+  <details open>
+    <summary>Why does Sky Warden show different numbers than my other weather app?</summary>
+    <p>Because it isn't showing one model — it's reconciling several of the world's leading forecast models into a single consensus. When they agree, you get a confident answer. When they disagree, Sky Warden shows the spread instead of hiding it behind one confident-looking number. Tap the confidence pill at the top to see each source's value side by side.</p>
+  </details>
+
+  <details>
+    <summary>What does the confidence percentage mean?</summary>
+    <p>It's how closely the forecast models agree right now — measured from their actual values, not a marketing figure. A calm ⓘ means they vary only slightly (still basically aligned); an amber ⚠️ means there's a real split worth a look. Tap it to see exactly which reading they differ on.</p>
+  </details>
+
+  <details>
+    <summary>The tide, sea temperature or radar isn't showing.</summary>
+    <p>Tide and marine data only appear where a provider covers your coastline, so inland locations won't show them (the scene switches to a land view there). Live radar depends on ground-radar coverage for your area — a gap means no radar in range, not necessarily no rain. Check that you have a network connection and try pulling down to refresh.</p>
+  </details>
+
+  <details>
+    <summary>How do I turn rain notifications on or off?</summary>
+    <p>Rain-approaching alerts are optional and evaluated on your device. You can allow or deny notifications when first prompted, and change it any time in iOS Settings ▸ Sky Warden ▸ Notifications.</p>
+  </details>
+
+  <details>
+    <summary>Why does it want my calendar?</summary>
+    <p>Only to flag weather that might affect your outdoor events (a beach day, a hike). Your calendar is read entirely on your device and never leaves it. It's optional — the rest of the app works without it. Manage access in iOS Settings ▸ Sky Warden ▸ Calendars.</p>
+  </details>
+
+  <details>
+    <summary>Can I change temperature units or my location?</summary>
+    <p>Yes. Units (°C / °F) are in Settings, and you can re-run first-time setup there too. Tap the place name at the top to search for a different location, or use your current location.</p>
+  </details>
+
+  <details>
+    <summary>The forecast looks stale or won't load.</summary>
+    <p>Pull down on the main screen to refresh. If it persists, check your connection — Sky Warden needs the internet to fetch from its data providers. Force-quitting and reopening the app also clears a stuck load.</p>
+  </details>
+
+  <details>
+    <summary>How is my privacy handled?</summary>
+    <p>No accounts, no tracking, no ads. Your location is used only to fetch weather and is never tied to your identity; your calendar never leaves your device. Full details on the <a href="privacy.html">privacy page</a>.</p>
+  </details>
+
+  <footer>
+    © 2026 Sky Warden ·
+    <a href="index.html">Home</a><a href="support.html">Support</a><a href="privacy.html">Privacy</a>
+  </footer>
+</div>
+</body>
+</html>

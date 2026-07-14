@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sky Warden — Many forecasts, one honest read</title>
+<meta name="description" content="Sky Warden reconciles many of the world's leading weather models into one honest read — with how sure they are, and where they disagree.">
+<style>
+  :root{
+    --navy:#0b1826; --navy2:#132d4a; --surface:#16324f; --tide:#4ecdc4;
+    --white:#f0f8ff; --text:#c9e0f0; --muted:#7ba7c4; --line:rgba(123,167,196,.18);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--text); background:
+      radial-gradient(1200px 700px at 70% -10%, #1a3a5c 0%, transparent 60%),
+      linear-gradient(180deg,#0b1826 0%,#0a1420 100%);
+    background-attachment:fixed; line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--tide); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:960px; margin:0 auto; padding:0 24px}
+  header{padding:22px 0; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap}
+  .brand{display:flex; align-items:center; gap:10px; font-weight:800; color:var(--white); font-size:19px}
+  .brand .dot{font-size:22px}
+  nav a{color:var(--muted); font-weight:600; font-size:14px; margin-left:20px}
+  nav a:hover{color:var(--white); text-decoration:none}
+
+  .hero{padding:56px 0 24px; text-align:center}
+  .hero h1{font-size:clamp(30px,6vw,52px); line-height:1.08; margin:0 0 16px; color:var(--white); letter-spacing:-.02em; font-weight:800}
+  .hero h1 .accent{color:var(--tide)}
+  .hero p.lede{font-size:clamp(16px,2.4vw,20px); max-width:640px; margin:0 auto 28px; color:var(--text)}
+  .cta{display:inline-flex; gap:12px; flex-wrap:wrap; justify-content:center}
+  .btn{display:inline-block; padding:13px 22px; border-radius:14px; font-weight:700; font-size:15px}
+  .btn.primary{background:var(--tide); color:#062024}
+  .btn.primary:hover{text-decoration:none; filter:brightness(1.06)}
+  .btn.ghost{border:1px solid var(--line); color:var(--white)}
+  .btn.ghost:hover{text-decoration:none; border-color:var(--tide)}
+
+  .shots{display:flex; gap:22px; justify-content:center; margin:44px 0 8px; flex-wrap:wrap}
+  .shots img{width:min(260px,42vw); border-radius:26px; box-shadow:0 24px 60px rgba(0,0,0,.5); border:1px solid var(--line)}
+
+  section.block{padding:44px 0}
+  h2{color:var(--white); font-size:clamp(22px,3.4vw,30px); letter-spacing:-.01em; margin:0 0 8px; font-weight:800}
+  .sub{color:var(--muted); margin:0 0 28px; max-width:640px}
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px}
+  .card{background:linear-gradient(180deg,var(--navy2),#0f2740); border:1px solid var(--line); border-radius:18px; padding:20px}
+  .card .ic{font-size:24px; margin-bottom:10px}
+  .card h3{color:var(--white); font-size:16px; margin:0 0 6px}
+  .card p{margin:0; font-size:14px; color:var(--muted)}
+
+  .band{background:linear-gradient(180deg,#0e2137,#0b1a2c); border:1px solid var(--line); border-radius:22px; padding:28px; text-align:center; margin-top:24px}
+  .band strong{color:var(--white)}
+
+  footer{border-top:1px solid var(--line); margin-top:40px; padding:28px 0 48px; color:var(--muted); font-size:13px; display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap}
+  footer a{color:var(--muted); margin-right:18px}
+  .pill{display:inline-block; font-size:12px; font-weight:700; color:var(--tide); background:rgba(78,205,196,.12); border:1px solid rgba(78,205,196,.35); border-radius:999px; padding:5px 12px; margin-bottom:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="dot">⛅️</span> Sky Warden</div>
+    <nav><a href="#features">Features</a><a href="#honest">Why it's different</a><a href="support.html">Support</a><a href="privacy.html">Privacy</a></nav>
+  </header>
+
+  <div class="hero">
+    <span class="pill">Multi-source consensus weather</span>
+    <h1>Many forecasts,<br><span class="accent">one honest read.</span></h1>
+    <p class="lede">Most weather apps pick one model and hide the rest. Sky Warden reads many of the world's leading forecast models at once — and tells you the answer, how sure it is, and exactly where they disagree.</p>
+    <div class="cta">
+      <a class="btn primary" href="#">Download on the App&nbsp;Store</a>
+      <a class="btn ghost" href="#features">See what it does</a>
+    </div>
+    <div class="shots">
+      <img src="assets/1-home-scene.png" alt="Sky Warden home screen — a living weather scene">
+      <img src="assets/2-source-consensus.png" alt="Where the sources differ — each forecast model side by side">
+    </div>
+  </div>
+
+  <section class="block" id="honest">
+    <h2>Honest by design</h2>
+    <p class="sub">A confident forecast that turns out wrong is worse than no forecast. Sky Warden never pretends to be more certain than the models actually are.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">🎯</div><h3>A real confidence reading</h3><p>Every forecast carries how much the models actually agree — not a marketing number.</p></div>
+      <div class="card"><div class="ic">🔍</div><h3>See where they differ</h3><p>Tap the confidence pill to see each model's value side by side, and how far apart they are.</p></div>
+      <div class="card"><div class="ic">✍️</div><h3>Your call wins</h3><p>“It says rain, it's dry.” Correct it, and Sky Warden respects your reading.</p></div>
+    </div>
+  </section>
+
+  <section class="block" id="features">
+    <h2>Everything you actually check</h2>
+    <p class="sub">One calm app for the whole picture — reconciled, hour by hour, for your exact place.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">🏝️</div><h3>A living scene</h3><p>A hand-drawn view that redraws with the real sun, cloud, rain, wind, waves and moon — day into night.</p></div>
+      <div class="card"><div class="ic">🕐</div><h3>Hour by hour</h3><p>Temperature, rain, wind, UV and humidity each with their own timeline. Rain hides the dry hours so you see when it actually rains.</p></div>
+      <div class="card"><div class="ic">🌊</div><h3>Tides &amp; marine</h3><p>Tide curve, waves, period and sea temperature — plus live rain radar you can play through.</p></div>
+      <div class="card"><div class="ic">🔌</div><h3>Solar &amp; energy</h3><p>When the sun's strong enough to run the dishwasher or charge — and, in supported regions, how clean the grid is right now.</p></div>
+      <div class="card"><div class="ic">📅</div><h3>Plans-aware</h3><p>Reads your calendar on-device and flags weather that threatens your outdoor events.</p></div>
+      <div class="card"><div class="ic">🌌</div><h3>Sky &amp; space</h3><p>Meteor showers, eclipses, moon phases and space-weather news.</p></div>
+    </div>
+    <div class="band">
+      <strong>Private by default.</strong> No account. No tracking. No ads. Your location is used only to fetch the weather and is never tied to your identity — and your calendar never leaves your device.
+    </div>
+  </section>
+
+  <footer>
+    <div>© 2026 Sky Warden. Weather reconciled from multiple public providers.</div>
+    <div>
+      <a href="privacy.html">Privacy</a>
+      <a href="support.html">Support</a>
+      <a href="https://github.com/daviddef/Sky-Warden">GitHub</a>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
